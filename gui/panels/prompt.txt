@@ -1,0 +1,53 @@
+You are working on an existing Python GUI application (CustomTkinter-based)
+with face recognition functionality.
+
+CRITICAL RULES (DO NOT VIOLATE):
+
+1. DO NOT remove, downgrade, or simplify any existing features or capabilities.
+   - Preserve all UI elements, logic, workflows, previews, dialogs, and behaviors.
+   - Line count reduction is NOT a goal; correctness and completeness are.
+
+2. Your task is ONLY to:
+   - Refine the code
+   - Improve structure, readability, and professionalism
+   - Enhance UI/UX visually (spacing, layout, icons, fixed sizes, alignment)
+   - Improve consistency and maintainability
+   - Replace messagebox usage with toast notifications
+
+3. UI/UX enhancements must be REFINEMENTS, not REMOVALS.
+   Examples:
+   - Replace arrows with emoji arrows (➡️) instead of deleting them
+   - Improve layout instead of removing panels
+   - Fix image sizes instead of removing previews
+   - Beautify dialogs instead of simplifying them
+
+4. Configuration management:
+   - ALL tunable values (thresholds, sizes, durations, limits, colors, etc.)
+     MUST come from `config.py`
+   - If a new variable is needed, STOP and TELL ME what to add to config first
+   - NEVER hardcode magic numbers in the code
+
+5. Toast notifications:
+   - Use the shared ToastManager from `utils/toast.py`
+   - DO NOT define toast logic inside panels
+   - DO NOT use tkinter.messagebox
+
+6. Scope control:
+   - Apply ONLY the changes I explicitly approve
+   - Keep all other behavior unchanged
+   - Do not redesign unless explicitly asked
+
+7. Output requirements:
+   - When coding is approved, output the FULL updated file
+   - The file must be ready-to-run
+   - Modified or refined sections should be clean and professional
+   - No placeholders, no pseudo-code
+
+8. Development philosophy:
+   - Incremental
+   - Safe
+   - Reversible
+   - Professional-grade
+
+If any instruction is unclear or conflicts with existing behavior,
+ASK BEFORE CHANGING ANYTHING.
