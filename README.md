@@ -12,11 +12,11 @@
 ## 🚀 Quick Start
 
 ### Try the Live Demo
-**[Launch Streamlit App →](YOUR_STREAMLIT_APP_URL)**
+**[Launch Streamlit App →](https://face-similarity-recognition.streamlit.app/)**
 
 ### Run Locally
 ```bash
-git clone https://github.com/YOUR_USERNAME/face-recognition-system.git
+git clone https://github.com/Mo-Abdalkader/face-recognition-system.git
 cd face-recognition-system
 pip install -r requirements.txt
 
@@ -258,10 +258,7 @@ MIT License - see [LICENSE](LICENSE) for details
 
 ## 📞 Contact
 
-**Your Name** - [@your_linkedin](https://linkedin.com/in/your-profile)
-
-Project Link: [github.com/YOUR_USERNAME/face-recognition-system](https://github.com/YOUR_USERNAME/face-recognition-system)
-
+**Mohamed Abdalkader** - [@your_linkedin](https://linkedin.com/in/Mo-Abdalkader)
 ---
 
 **⭐ Star this repo if you find it useful!**
