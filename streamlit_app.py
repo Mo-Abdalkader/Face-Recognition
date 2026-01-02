@@ -34,27 +34,25 @@ st.set_page_config(
 # ==================================================================================
 
 class HybridFaceEncoder(nn.Module):
-    """Hybrid GoogleNet + ResNet18 Face Encoder"""
+    """
+    Hybrid GoogleNet + ResNet18 Face Encoder
+    Architecture MUST match the exact structure from training
+    """
     
     def __init__(self, embedding_dim=512, dropout=0.3):
         super(HybridFaceEncoder, self).__init__()
         
-        # GoogleNet features - use weights parameter (new PyTorch syntax)
-        try:
-            from torchvision.models import GoogLeNet_Weights
-            googlenet = models.googlenet(weights=None)  # Load without pretrained weights
-        except:
-            googlenet = models.googlenet(pretrained=False)  # Fallback for older PyTorch
+        # CRITICAL: Load GoogleNet architecture (NO pretrained weights - they're in model.pth!)
+        # Use aux_logits=True because that's how it was trained
+        googlenet = models.googlenet(pretrained=False, aux_logits=True, init_weights=False)
         
+        # Extract features (everything except the final FC layer)
         self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
         
-        # ResNet18 features - use weights parameter (new PyTorch syntax)
-        try:
-            from torchvision.models import ResNet18_Weights
-            resnet18 = models.resnet18(weights=None)  # Load without pretrained weights
-        except:
-            resnet18 = models.resnet18(pretrained=False)  # Fallback for older PyTorch
+        # ResNet18 architecture (NO pretrained weights - they're in model.pth!)
+        resnet18 = models.resnet18(pretrained=False)
         
+        # Extract features (everything except the final FC layer)
         self.resnet_features = nn.Sequential(*list(resnet18.children())[:-1])
         
         # Fusion layer: 1024 (GoogleNet) + 512 (ResNet) = 1536
@@ -72,7 +70,7 @@ class HybridFaceEncoder(nn.Module):
         googlenet_out = self.googlenet_features(x)
         googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)
         
-        # ResNet features
+        # ResNet features  
         resnet_out = self.resnet_features(x)
         resnet_out = resnet_out.view(resnet_out.size(0), -1)
         
@@ -124,37 +122,49 @@ def load_model():
     
     try:
         with st.spinner("🚀 Loading AI model..."):
-            # Initialize model
-            model = HybridFaceEncoder(embedding_dim=512, dropout=0.3)
-            
-            # Load checkpoint with weights_only=False for compatibility
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             
-            # Try loading with weights_only=False (required for models with numpy objects)
+            # Initialize model architecture (empty weights)
+            model = HybridFaceEncoder(embedding_dim=512, dropout=0.3)
+            
+            # Load the trained checkpoint (THIS has the actual trained weights!)
             try:
                 checkpoint = torch.load(model_path, map_location=device, weights_only=False)
-            except Exception as e:
-                st.warning(f"⚠️ Loading with legacy mode: {str(e)[:100]}")
-                # Fallback: allow numpy globals
+            except Exception:
+                # Fallback for numpy objects in checkpoint
                 import numpy as np
                 with torch.serialization.safe_globals([np.core.multiarray.scalar]):
                     checkpoint = torch.load(model_path, map_location=device)
             
-            # Handle different checkpoint formats
-            if 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
+            # Extract state dict from checkpoint
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                state_dict = checkpoint['model_state_dict']
             else:
-                model.load_state_dict(checkpoint)
+                state_dict = checkpoint
+            
+            # Load the trained weights into the model
+            model.load_state_dict(state_dict, strict=True)
             
             model.to(device)
             model.eval()
             torch.set_grad_enabled(False)
             
+            st.success(f"✅ Model loaded successfully on {device}!")
+            
             return model, device
     
     except Exception as e:
         st.error(f"❌ Failed to load model: {e}")
-        st.error("💡 Try re-saving your model with: `torch.save(model.state_dict(), 'model.pth')`")
+        
+        # Show helpful debug info
+        with st.expander("🔍 Debug Information"):
+            st.write("**Error details:**")
+            st.code(str(e))
+            st.write("**Model path:**", model_path)
+            st.write("**File exists:**", model_path.exists())
+            if model_path.exists():
+                st.write("**File size:**", f"{model_path.stat().st_size / 1024 / 1024:.1f} MB")
+        
         st.stop()
 
 
