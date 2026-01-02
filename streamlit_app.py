@@ -13,7 +13,14 @@ import pandas as pd
 from pathlib import Path
 import time
 from datetime import datetime
-import cv2
+# Use cv2 carefully - already imported via other dependencies
+try:
+    import cv2
+except ImportError:
+    import sys
+    print("Warning: OpenCV not available, using PIL only", file=sys.stderr)
+    cv2 = None
+
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
 import plotly.graph_objects as go
@@ -33,6 +40,7 @@ st.set_page_config(
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '0'  # Disable OpenEXR to reduce dependencies
 
 # Import project modules (adjust paths as needed)
 import sys
