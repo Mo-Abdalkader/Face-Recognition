@@ -7,7 +7,7 @@ facenet-pytorch>=2.5.2
 mtcnn>=0.1.1
 
 # Image Processing
-opencv-python>=4.8.0
+opencv-python-headless>=4.8.0  # Use headless version for Streamlit Cloud
 Pillow>=10.0.0
 
 # Data Science & Visualization
