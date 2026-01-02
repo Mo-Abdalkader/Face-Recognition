@@ -1,7 +1,17 @@
 [server]
 headless = true
-enableXsrfProtection = false
+port = 8501
 enableCORS = false
+enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false
+serverAddress = "localhost"
+
+[runner]
+magicEnabled = true
+fastReruns = true
+
+[client]
+showErrorDetails = true
+toolbarMode = "minimal"
