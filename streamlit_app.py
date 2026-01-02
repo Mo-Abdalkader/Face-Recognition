@@ -39,12 +39,22 @@ class HybridFaceEncoder(nn.Module):
     def __init__(self, embedding_dim=512, dropout=0.3):
         super(HybridFaceEncoder, self).__init__()
         
-        # GoogleNet features
-        googlenet = models.googlenet(pretrained=False)
+        # GoogleNet features - use weights parameter (new PyTorch syntax)
+        try:
+            from torchvision.models import GoogLeNet_Weights
+            googlenet = models.googlenet(weights=None)  # Load without pretrained weights
+        except:
+            googlenet = models.googlenet(pretrained=False)  # Fallback for older PyTorch
+        
         self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
         
-        # ResNet18 features
-        resnet18 = models.resnet18(pretrained=False)
+        # ResNet18 features - use weights parameter (new PyTorch syntax)
+        try:
+            from torchvision.models import ResNet18_Weights
+            resnet18 = models.resnet18(weights=None)  # Load without pretrained weights
+        except:
+            resnet18 = models.resnet18(pretrained=False)  # Fallback for older PyTorch
+        
         self.resnet_features = nn.Sequential(*list(resnet18.children())[:-1])
         
         # Fusion layer: 1024 (GoogleNet) + 512 (ResNet) = 1536
@@ -117,9 +127,18 @@ def load_model():
             # Initialize model
             model = HybridFaceEncoder(embedding_dim=512, dropout=0.3)
             
-            # Load checkpoint
+            # Load checkpoint with weights_only=False for compatibility
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            checkpoint = torch.load(model_path, map_location=device)
+            
+            # Try loading with weights_only=False (required for models with numpy objects)
+            try:
+                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+            except Exception as e:
+                st.warning(f"⚠️ Loading with legacy mode: {str(e)[:100]}")
+                # Fallback: allow numpy globals
+                import numpy as np
+                with torch.serialization.safe_globals([np.core.multiarray.scalar]):
+                    checkpoint = torch.load(model_path, map_location=device)
             
             # Handle different checkpoint formats
             if 'model_state_dict' in checkpoint:
@@ -135,6 +154,7 @@ def load_model():
     
     except Exception as e:
         st.error(f"❌ Failed to load model: {e}")
+        st.error("💡 Try re-saving your model with: `torch.save(model.state_dict(), 'model.pth')`")
         st.stop()
 
 
