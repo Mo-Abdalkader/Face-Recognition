@@ -44,9 +44,23 @@ os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '0'  # Disable OpenEXR to reduce depend
 
 # Import project modules (adjust paths as needed)
 import sys
-sys.path.append(str(Path(__file__).parent.parent))
+# Fix path to import from current directory, not parent
+project_root = Path(__file__).parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
-from config import Config
+# Import using absolute path to avoid cv2.config conflict
+try:
+    from config import Config
+except ImportError:
+    # If config.py is being shadowed by cv2.config, import directly
+    import importlib.util
+    config_path = project_root / "config.py"
+    spec = importlib.util.spec_from_file_location("project_config", config_path)
+    config_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(config_module)
+    Config = config_module.Config
+
 from inference.embedding_generator import FaceEmbeddingGenerator
 from data.face_cropper import FaceCropper
 from models.hybrid_encoder import HybridFaceEncoder
@@ -718,4 +732,5 @@ def show_webcam_comparison(embedding_generator, face_cropper, threshold):
                     st.error(f"❌ Error: {e}")
 
 
-main()
+if __name__ == "__main__":
+    main()
