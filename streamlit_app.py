@@ -211,7 +211,11 @@ def process_image_for_faces(image, face_cropper):
     img_array = np.array(image)
     
     # Detect faces
-    faces = face_cropper.mtcnn.detect(img_array)
+    try:
+        faces = face_cropper.mtcnn.detect(img_array)
+    except Exception as e:
+        st.error(f"Face detection error: {e}")
+        return []
     
     if faces[0] is None:
         return []
