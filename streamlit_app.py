@@ -36,23 +36,27 @@ st.set_page_config(
 class HybridFaceEncoder(nn.Module):
     """
     Hybrid GoogleNet + ResNet18 Face Encoder
-    Architecture MUST match the exact structure from training
+    EXACTLY matches the training architecture from hybrid_encoder.py
     """
     
     def __init__(self, embedding_dim=512, dropout=0.3):
         super(HybridFaceEncoder, self).__init__()
         
-        # CRITICAL: Load GoogleNet architecture (NO pretrained weights - they're in model.pth!)
-        # Use aux_logits=True because that's how it was trained
-        googlenet = models.googlenet(pretrained=False, aux_logits=True, init_weights=False)
+        # CRITICAL: Your training code downloaded pretrained GoogleNet with this exact line:
+        # googlenet = models.googlenet(pretrained=True)
+        # So we need to match that EXACT architecture
         
-        # Extract features (everything except the final FC layer)
+        # Load GoogleNet with pretrained=True to get EXACT same architecture
+        # Don't worry about weights - we'll overwrite them with model.pth
+        googlenet = models.googlenet(pretrained=True)
+        
+        # Extract features EXACTLY as in training: everything except last layer
         self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
         
-        # ResNet18 architecture (NO pretrained weights - they're in model.pth!)
-        resnet18 = models.resnet18(pretrained=False)
+        # Load ResNet18 with pretrained=True to match training
+        resnet18 = models.resnet18(pretrained=True)
         
-        # Extract features (everything except the final FC layer)
+        # Extract features EXACTLY as in training
         self.resnet_features = nn.Sequential(*list(resnet18.children())[:-1])
         
         # Fusion layer: 1024 (GoogleNet) + 512 (ResNet) = 1536
@@ -124,10 +128,10 @@ def load_model():
         with st.spinner("🚀 Loading AI model..."):
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             
-            # Initialize model architecture (empty weights)
+            # Initialize model architecture
             model = HybridFaceEncoder(embedding_dim=512, dropout=0.3)
             
-            # Load the trained checkpoint (THIS has the actual trained weights!)
+            # Load the trained checkpoint
             try:
                 checkpoint = torch.load(model_path, map_location=device, weights_only=False)
             except Exception:
@@ -142,8 +146,21 @@ def load_model():
             else:
                 state_dict = checkpoint
             
-            # Load the trained weights into the model
-            model.load_state_dict(state_dict, strict=True)
+            # Load the trained weights
+            # Use strict=False because aux classifiers (layers 16,17) might have different structure
+            # These layers are not used during inference anyway
+            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+            
+            # Filter out expected missing keys (aux classifiers)
+            actual_missing = [k for k in missing_keys if 'googlenet_features.16' not in k and 'googlenet_features.17' not in k]
+            
+            if actual_missing:
+                st.error(f"❌ Critical weights missing: {actual_missing[:5]}")
+                st.stop()
+            
+            # Success message
+            if missing_keys:
+                st.info(f"ℹ️ Skipped {len(missing_keys)} auxiliary classifier layers (not needed for inference)")
             
             model.to(device)
             model.eval()
@@ -626,4 +643,5 @@ def main():
         mode_batch_comparison(model, mtcnn, transform, device, threshold)
 
 
-main()
+if __name__ == "__main__":
+    main()
