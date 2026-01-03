@@ -36,27 +36,26 @@ st.set_page_config(
 class HybridFaceEncoder(nn.Module):
     """
     Hybrid GoogleNet + ResNet18 Face Encoder
-    EXACTLY matches the training architecture from hybrid_encoder.py
+    Matches training architecture WITHOUT downloading pretrained weights
     """
     
     def __init__(self, embedding_dim=512, dropout=0.3):
         super(HybridFaceEncoder, self).__init__()
         
-        # CRITICAL: Your training code downloaded pretrained GoogleNet with this exact line:
-        # googlenet = models.googlenet(pretrained=True)
-        # So we need to match that EXACT architecture
+        # Use new weights API to avoid deprecation warnings
+        # weights=None means no pretrained weights, just the architecture
+        try:
+            # Try new API (torchvision >= 0.13)
+            from torchvision.models import GoogLeNet_Weights, ResNet18_Weights
+            googlenet = models.googlenet(weights=None)
+            resnet18 = models.resnet18(weights=None)
+        except ImportError:
+            # Fallback to old API
+            googlenet = models.googlenet(pretrained=False)
+            resnet18 = models.resnet18(pretrained=False)
         
-        # Load GoogleNet with pretrained=True to get EXACT same architecture
-        # Don't worry about weights - we'll overwrite them with model.pth
-        googlenet = models.googlenet(pretrained=True)
-        
-        # Extract features EXACTLY as in training: everything except last layer
+        # Extract features (everything except the final FC layer)
         self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
-        
-        # Load ResNet18 with pretrained=True to match training
-        resnet18 = models.resnet18(pretrained=True)
-        
-        # Extract features EXACTLY as in training
         self.resnet_features = nn.Sequential(*list(resnet18.children())[:-1])
         
         # Fusion layer: 1024 (GoogleNet) + 512 (ResNet) = 1536
