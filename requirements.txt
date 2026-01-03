@@ -1,4 +1,4 @@
-# Core Dependencies - Compatible Versions
+# Core Dependencies - EXACT versions that match your training
 torch==2.0.1
 torchvision==0.15.2
 
@@ -8,7 +8,7 @@ facenet-pytorch==2.5.3
 # Image Processing
 Pillow==10.0.1
 
-# Data Science (Compatible with torch 2.0.1)
+# Data Science
 numpy==1.24.3
 pandas==2.0.3
 scikit-learn==1.3.2
