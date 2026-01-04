@@ -48,10 +48,21 @@ class HybridFaceEncoder(nn.Module):
         googlenet = self._create_empty_googlenet()
         resnet18 = self._create_empty_resnet18()
         
-        # Extract features (everything except the final FC layer)
-        # This should give us 1024-dim from GoogleNet and 512-dim from ResNet18
-        self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
-        self.resnet_features = nn.Sequential(*list(resnet18.children())[:-1])
+        # Extract features properly
+        # GoogleNet architecture ends with: ... → avgpool → dropout → fc
+        # We need: everything up to and including dropout (before fc)
+        # ResNet18 architecture ends with: ... → avgpool → fc
+        # We need: everything up to and including avgpool (before fc)
+        
+        # For GoogleNet: children are [conv1, maxpool1, conv2, ..., inception5b, avgpool, dropout, fc]
+        # We want all except the final 'fc' layer
+        googlenet_layers = list(googlenet.children())
+        self.googlenet_features = nn.Sequential(*googlenet_layers[:-1])  # Includes avgpool and dropout
+        
+        # For ResNet18: children are [conv1, bn1, relu, maxpool, layer1, layer2, layer3, layer4, avgpool, fc]
+        # We want all except the final 'fc' layer
+        resnet_layers = list(resnet18.children())
+        self.resnet_features = nn.Sequential(*resnet_layers[:-1])  # Includes avgpool
         
         # Fusion layer: 1024 (GoogleNet) + 512 (ResNet) = 1536
         self.fusion = nn.Sequential(
@@ -84,12 +95,26 @@ class HybridFaceEncoder(nn.Module):
         return resnet18
     
     def forward(self, x):
-        # GoogleNet features - should output [B, 1024, 1, 1]
-        googlenet_out = self.googlenet_features(x)
-        googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)  # [B, 1024]
+        # GoogleNet features
+        # GoogleNet architecture: conv layers → inception modules → avgpool → dropout → fc
+        # We want output BEFORE the final FC layer (after avgpool and dropout)
+        # This gives us 1024-dim features
+        googlenet_out = self.googlenet_features(x)  # Output: [B, 1024, 1, 1] or [B, 1024]
         
-        # ResNet features - should output [B, 512, 1, 1]
-        resnet_out = self.resnet_features(x)
+        # Flatten if needed
+        if len(googlenet_out.shape) == 4:  # [B, 1024, 1, 1]
+            googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)  # [B, 1024]
+        elif len(googlenet_out.shape) == 2:  # Already [B, 1024]
+            pass
+        else:
+            # Unexpected shape, flatten everything except batch dimension
+            googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)
+        
+        # ResNet features
+        # ResNet architecture: conv layers → residual blocks → avgpool → fc
+        # We want output BEFORE the final FC layer (after avgpool)
+        # This gives us 512-dim features
+        resnet_out = self.resnet_features(x)  # Output: [B, 512, 1, 1]
         resnet_out = resnet_out.view(resnet_out.size(0), -1)  # [B, 512]
         
         # Concatenate and fuse - [B, 1536]
@@ -190,6 +215,20 @@ def load_model():
             try:
                 with torch.no_grad():
                     test_input = torch.randn(1, 3, 224, 224).to(device)
+                    
+                    # Debug: Check intermediate outputs
+                    with st.expander("🔍 Architecture Debug Info"):
+                        try:
+                            # Test GoogleNet features
+                            gnet_out = model.googlenet_features(test_input)
+                            st.write(f"GoogleNet output shape: {gnet_out.shape}")
+                            
+                            # Test ResNet features
+                            rnet_out = model.resnet_features(test_input)
+                            st.write(f"ResNet output shape: {rnet_out.shape}")
+                        except Exception as debug_e:
+                            st.write(f"Debug error: {debug_e}")
+                    
                     test_output = model(test_input)
                     
                     if test_output.shape[1] != 512:
@@ -200,6 +239,24 @@ def load_model():
                     st.info(f"✓ Output embedding dimension: {test_output.shape[1]}")
             except Exception as e:
                 st.error(f"❌ Model verification failed: {e}")
+                
+                # Enhanced debug info
+                with st.expander("🔍 Detailed Architecture Info"):
+                    st.write("**GoogleNet layers:**")
+                    for i, layer in enumerate(list(model.googlenet_features.children())):
+                        st.write(f"  {i}: {layer.__class__.__name__}")
+                    
+                    st.write("**ResNet layers:**")
+                    for i, layer in enumerate(list(model.resnet_features.children())):
+                        st.write(f"  {i}: {layer.__class__.__name__}")
+                    
+                    st.write("**Error details:**")
+                    st.code(str(e))
+                    
+                    import traceback
+                    st.write("**Traceback:**")
+                    st.code(traceback.format_exc())
+                
                 st.stop()
             
             return model, device
