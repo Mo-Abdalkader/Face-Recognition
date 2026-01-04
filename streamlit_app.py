@@ -30,35 +30,30 @@ st.set_page_config(
 )
 
 # ==================================================================================
-# MODEL ARCHITECTURE
+# MODEL ARCHITECTURE (Matches Training Code EXACTLY)
 # ==================================================================================
 
 class HybridFaceEncoder(nn.Module):
     """
     Hybrid GoogleNet + ResNet18 Face Encoder
-    Trained model has custom architecture - we ONLY load the fusion layers
-    The backbone weights are already in model.pth checkpoint
+    EXACT architecture from training - loads cached pretrained backbones
     """
     
     def __init__(self, embedding_dim=512, dropout=0.3):
         super(HybridFaceEncoder, self).__init__()
         
-        # Create EMPTY architectures (no pretrained weights)
-        googlenet = self._create_empty_googlenet()
-        resnet18 = self._create_empty_resnet18()
+        # Path to cached pretrained models
+        self.cache_dir = Path("files/pretrained_models")
         
-        # GoogleNet: We can't just use children()[:-1] because of auxiliary classifiers
-        # Instead, manually build the feature extractor
-        # GoogleNet structure: conv blocks → inception blocks → avgpool → dropout → fc
-        # We need everything EXCEPT the fc layer at the end
+        print("Loading model architecture...")
         
-        # Store the googlenet model itself for proper forward pass
-        self.googlenet = googlenet
+        # Load GoogleNet and ResNet18 with cached weights
+        googlenet = self._load_googlenet()
+        resnet18 = self._load_resnet18()
         
-        # For ResNet18: Standard approach works fine
-        # ResNet structure: conv layers → residual blocks → avgpool → fc
-        resnet_layers = list(resnet18.children())
-        self.resnet_features = nn.Sequential(*resnet_layers[:-1])
+        # Extract features (everything except the final FC layer)
+        self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
+        self.resnet_features = nn.Sequential(*list(resnet18.children())[:-1])
         
         # Fusion layer: 1024 (GoogleNet) + 512 (ResNet) = 1536
         self.fusion = nn.Sequential(
@@ -69,70 +64,66 @@ class HybridFaceEncoder(nn.Module):
         )
         
         self.embedding_dim = embedding_dim
+        print(f"✓ Hybrid encoder initialized (embedding_dim={embedding_dim})")
     
-    def _create_empty_googlenet(self):
-        """Create empty GoogleNet architecture (no pretrained weights)"""
+    def _load_googlenet(self):
+        """Load GoogleNet from cached pretrained weights"""
+        cache_path = self.cache_dir / "googlenet_pretrained.pth"
+        
+        # Create architecture
         try:
-            # Try new API first
             googlenet = models.googlenet(weights=None, init_weights=False)
         except TypeError:
-            # Fallback to old API
             googlenet = models.googlenet(pretrained=False, init_weights=False)
+        
+        # Load cached weights if they exist
+        if cache_path.exists():
+            try:
+                print(f"  Loading GoogleNet from cache: {cache_path}")
+                state_dict = torch.load(cache_path, map_location='cpu', weights_only=False)
+                googlenet.load_state_dict(state_dict, strict=False)
+            except Exception as e:
+                print(f"  Warning: Could not load cached GoogleNet: {e}")
+        else:
+            print(f"  Warning: GoogleNet cache not found at {cache_path}")
+        
         return googlenet
     
-    def _create_empty_resnet18(self):
-        """Create empty ResNet18 architecture (no pretrained weights)"""
+    def _load_resnet18(self):
+        """Load ResNet18 from cached pretrained weights"""
+        cache_path = self.cache_dir / "resnet18_pretrained.pth"
+        
+        # Create architecture
         try:
-            # Try new API first
             resnet18 = models.resnet18(weights=None)
         except TypeError:
-            # Fallback to old API
             resnet18 = models.resnet18(pretrained=False)
+        
+        # Load cached weights if they exist
+        if cache_path.exists():
+            try:
+                print(f"  Loading ResNet18 from cache: {cache_path}")
+                state_dict = torch.load(cache_path, map_location='cpu', weights_only=False)
+                resnet18.load_state_dict(state_dict, strict=False)
+            except Exception as e:
+                print(f"  Warning: Could not load cached ResNet18: {e}")
+        else:
+            print(f"  Warning: ResNet18 cache not found at {cache_path}")
+        
         return resnet18
     
     def forward(self, x):
-        # GoogleNet features - Use the model's forward but extract features before FC
-        # GoogleNet has: conv → inception blocks → avgpool → dropout → fc
-        # We want output after dropout, before fc (1024-dim)
+        # GoogleNet features
+        googlenet_out = self.googlenet_features(x)
+        googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)
         
-        # Process through GoogleNet manually up to before the FC layer
-        x_g = x
-        
-        # Initial conv layers
-        x_g = self.googlenet.conv1(x_g)
-        x_g = self.googlenet.maxpool1(x_g)
-        x_g = self.googlenet.conv2(x_g)
-        x_g = self.googlenet.conv3(x_g)
-        x_g = self.googlenet.maxpool2(x_g)
-        
-        # Inception blocks
-        x_g = self.googlenet.inception3a(x_g)
-        x_g = self.googlenet.inception3b(x_g)
-        x_g = self.googlenet.maxpool3(x_g)
-        x_g = self.googlenet.inception4a(x_g)
-        x_g = self.googlenet.inception4b(x_g)
-        x_g = self.googlenet.inception4c(x_g)
-        x_g = self.googlenet.inception4d(x_g)
-        x_g = self.googlenet.inception4e(x_g)
-        x_g = self.googlenet.maxpool4(x_g)
-        x_g = self.googlenet.inception5a(x_g)
-        x_g = self.googlenet.inception5b(x_g)
-        
-        # Avgpool and dropout (but NOT fc)
-        x_g = self.googlenet.avgpool(x_g)
-        x_g = torch.flatten(x_g, 1)
-        x_g = self.googlenet.dropout(x_g)
-        
-        # Now x_g should be [B, 1024]
-        googlenet_out = x_g
-        
-        # ResNet features - Standard extraction works fine
+        # ResNet features  
         resnet_out = self.resnet_features(x)
-        resnet_out = resnet_out.view(resnet_out.size(0), -1)  # [B, 512]
+        resnet_out = resnet_out.view(resnet_out.size(0), -1)
         
-        # Concatenate and fuse - [B, 1536]
+        # Concatenate and fuse
         combined = torch.cat([googlenet_out, resnet_out], dim=1)
-        embedding = self.fusion(combined)  # [B, 512]
+        embedding = self.fusion(combined)
         
         # L2 normalize
         embedding = F.normalize(embedding, p=2, dim=1)
@@ -228,46 +219,6 @@ def load_model():
             try:
                 with torch.no_grad():
                     test_input = torch.randn(1, 3, 224, 224).to(device)
-                    
-                    # Debug: Check intermediate outputs
-                    with st.expander("🔍 Architecture Debug Info"):
-                        try:
-                            # Test GoogleNet features manually
-                            x_g = test_input
-                            x_g = model.googlenet.conv1(x_g)
-                            x_g = model.googlenet.maxpool1(x_g)
-                            x_g = model.googlenet.conv2(x_g)
-                            x_g = model.googlenet.conv3(x_g)
-                            x_g = model.googlenet.maxpool2(x_g)
-                            x_g = model.googlenet.inception3a(x_g)
-                            x_g = model.googlenet.inception3b(x_g)
-                            x_g = model.googlenet.maxpool3(x_g)
-                            x_g = model.googlenet.inception4a(x_g)
-                            x_g = model.googlenet.inception4b(x_g)
-                            x_g = model.googlenet.inception4c(x_g)
-                            x_g = model.googlenet.inception4d(x_g)
-                            x_g = model.googlenet.inception4e(x_g)
-                            x_g = model.googlenet.maxpool4(x_g)
-                            x_g = model.googlenet.inception5a(x_g)
-                            x_g = model.googlenet.inception5b(x_g)
-                            x_g = model.googlenet.avgpool(x_g)
-                            x_g = torch.flatten(x_g, 1)
-                            x_g = model.googlenet.dropout(x_g)
-                            st.write(f"GoogleNet output shape: {x_g.shape}")
-                            
-                            # Test ResNet features
-                            rnet_out = model.resnet_features(test_input)
-                            rnet_out = rnet_out.view(rnet_out.size(0), -1)
-                            st.write(f"ResNet output shape: {rnet_out.shape}")
-                            
-                            # Test concatenation
-                            combined = torch.cat([x_g, rnet_out], dim=1)
-                            st.write(f"Combined shape: {combined.shape}")
-                        except Exception as debug_e:
-                            st.write(f"Debug error: {debug_e}")
-                            import traceback
-                            st.code(traceback.format_exc())
-                    
                     test_output = model(test_input)
                     
                     if test_output.shape[1] != 512:
@@ -279,7 +230,6 @@ def load_model():
             except Exception as e:
                 st.error(f"❌ Model verification failed: {e}")
                 
-                # Enhanced debug info
                 with st.expander("🔍 Detailed Error Info"):
                     st.write("**Error details:**")
                     st.code(str(e))
