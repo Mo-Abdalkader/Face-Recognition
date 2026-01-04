@@ -36,17 +36,20 @@ st.set_page_config(
 class HybridFaceEncoder(nn.Module):
     """
     Hybrid GoogleNet + ResNet18 Face Encoder
-    Uses cached pretrained models from files/pretrained_models/
+    Trained model has custom architecture - we ONLY load the fusion layers
+    The backbone weights are already in model.pth checkpoint
     """
     
     def __init__(self, embedding_dim=512, dropout=0.3):
         super(HybridFaceEncoder, self).__init__()
         
-        # Load from cached pretrained models (already in repo)
-        googlenet = self._load_cached_googlenet()
-        resnet18 = self._load_cached_resnet18()
+        # Create EMPTY architectures (no pretrained weights)
+        # The trained weights will be loaded from model.pth
+        googlenet = self._create_empty_googlenet()
+        resnet18 = self._create_empty_resnet18()
         
         # Extract features (everything except the final FC layer)
+        # This should give us 1024-dim from GoogleNet and 512-dim from ResNet18
         self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
         self.resnet_features = nn.Sequential(*list(resnet18.children())[:-1])
         
@@ -60,62 +63,38 @@ class HybridFaceEncoder(nn.Module):
         
         self.embedding_dim = embedding_dim
     
-    def _load_cached_googlenet(self):
-        """Load GoogleNet from cached pretrained weights"""
-        cache_path = Path("files/pretrained_models/googlenet_pretrained.pth")
-        
-        # Create empty architecture
+    def _create_empty_googlenet(self):
+        """Create empty GoogleNet architecture (no pretrained weights)"""
         try:
             # Try new API first
             googlenet = models.googlenet(weights=None, init_weights=False)
         except TypeError:
             # Fallback to old API
             googlenet = models.googlenet(pretrained=False, init_weights=False)
-        
-        # Load cached weights if they exist
-        if cache_path.exists():
-            try:
-                state_dict = torch.load(cache_path, map_location='cpu')
-                googlenet.load_state_dict(state_dict, strict=False)
-            except Exception as e:
-                st.warning(f"Could not load cached GoogleNet weights: {e}")
-        
         return googlenet
     
-    def _load_cached_resnet18(self):
-        """Load ResNet18 from cached pretrained weights"""
-        cache_path = Path("files/pretrained_models/resnet18_pretrained.pth")
-        
-        # Create empty architecture
+    def _create_empty_resnet18(self):
+        """Create empty ResNet18 architecture (no pretrained weights)"""
         try:
             # Try new API first
             resnet18 = models.resnet18(weights=None)
         except TypeError:
             # Fallback to old API
             resnet18 = models.resnet18(pretrained=False)
-        
-        # Load cached weights if they exist
-        if cache_path.exists():
-            try:
-                state_dict = torch.load(cache_path, map_location='cpu')
-                resnet18.load_state_dict(state_dict, strict=False)
-            except Exception as e:
-                st.warning(f"Could not load cached ResNet18 weights: {e}")
-        
         return resnet18
     
     def forward(self, x):
-        # GoogleNet features
+        # GoogleNet features - should output [B, 1024, 1, 1]
         googlenet_out = self.googlenet_features(x)
-        googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)
+        googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)  # [B, 1024]
         
-        # ResNet features  
+        # ResNet features - should output [B, 512, 1, 1]
         resnet_out = self.resnet_features(x)
-        resnet_out = resnet_out.view(resnet_out.size(0), -1)
+        resnet_out = resnet_out.view(resnet_out.size(0), -1)  # [B, 512]
         
-        # Concatenate and fuse
+        # Concatenate and fuse - [B, 1536]
         combined = torch.cat([googlenet_out, resnet_out], dim=1)
-        embedding = self.fusion(combined)
+        embedding = self.fusion(combined)  # [B, 512]
         
         # L2 normalize
         embedding = F.normalize(embedding, p=2, dim=1)
@@ -163,10 +142,10 @@ def load_model():
         with st.spinner("🚀 Loading AI model..."):
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             
-            # Initialize model architecture
+            # Initialize EMPTY model architecture
             model = HybridFaceEncoder(embedding_dim=512, dropout=0.3)
             
-            # Load the trained checkpoint
+            # Load the trained checkpoint (contains ALL weights)
             try:
                 checkpoint = torch.load(model_path, map_location=device, weights_only=False)
             except Exception:
@@ -176,28 +155,52 @@ def load_model():
             # Extract state dict from checkpoint
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
                 state_dict = checkpoint['model_state_dict']
+                st.info(f"📦 Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')}")
             else:
                 state_dict = checkpoint
             
-            # Load the trained weights
-            # Use strict=False because aux classifiers might differ
+            # Load ALL the trained weights (backbones + fusion layers)
+            # Use strict=False to handle auxiliary classifiers gracefully
             missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
             
             # Check for critical missing keys (ignore aux classifiers)
             critical_missing = [k for k in missing_keys 
-                              if 'aux' not in k.lower() and 'googlenet_features.16' not in k 
+                              if 'aux' not in k.lower() 
+                              and 'googlenet_features.16' not in k 
                               and 'googlenet_features.17' not in k]
             
             if critical_missing:
-                st.error(f"❌ Critical weights missing: {critical_missing[:5]}")
+                st.error(f"❌ Critical weights missing: {critical_missing[:10]}")
+                with st.expander("🔍 See all missing keys"):
+                    st.write(critical_missing)
                 st.stop()
+            
+            # Show info about skipped layers
+            if missing_keys:
+                aux_count = len([k for k in missing_keys if 'aux' in k.lower() or 'googlenet_features.16' in k or 'googlenet_features.17' in k])
+                if aux_count > 0:
+                    st.info(f"ℹ️ Skipped {aux_count} auxiliary classifier layers (not needed for inference)")
             
             # Move to device and set to eval mode
             model.to(device)
             model.eval()
             torch.set_grad_enabled(False)
             
-            st.success(f"✅ Model loaded successfully on {device}!")
+            # Verify architecture by doing a test forward pass
+            try:
+                with torch.no_grad():
+                    test_input = torch.randn(1, 3, 224, 224).to(device)
+                    test_output = model(test_input)
+                    
+                    if test_output.shape[1] != 512:
+                        st.error(f"❌ Model output dimension mismatch! Expected 512, got {test_output.shape[1]}")
+                        st.stop()
+                    
+                    st.success(f"✅ Model loaded successfully on {device}!")
+                    st.info(f"✓ Output embedding dimension: {test_output.shape[1]}")
+            except Exception as e:
+                st.error(f"❌ Model verification failed: {e}")
+                st.stop()
             
             return model, device
     
@@ -211,6 +214,19 @@ def load_model():
             st.write("**File exists:**", model_path.exists())
             if model_path.exists():
                 st.write("**File size:**", f"{model_path.stat().st_size / 1024 / 1024:.1f} MB")
+            
+            # Try to load and inspect checkpoint structure
+            try:
+                checkpoint = torch.load(model_path, map_location='cpu')
+                st.write("**Checkpoint type:**", type(checkpoint))
+                if isinstance(checkpoint, dict):
+                    st.write("**Checkpoint keys:**", list(checkpoint.keys()))
+                    if 'model_state_dict' in checkpoint:
+                        state_dict = checkpoint['model_state_dict']
+                        st.write("**Model state dict keys (first 20):**")
+                        st.write(list(state_dict.keys())[:20])
+            except Exception as debug_e:
+                st.write("**Could not inspect checkpoint:**", str(debug_e))
         
         st.stop()
 
@@ -267,8 +283,14 @@ def detect_faces(image, mtcnn):
 def generate_embedding(face_image, model, transform, device):
     """Generate embedding for a face image"""
     try:
+        # Ensure RGB
+        if face_image.mode != 'RGB':
+            face_image = face_image.convert('RGB')
+        
+        # Preprocess
         img_tensor = transform(face_image).unsqueeze(0).to(device)
         
+        # Generate embedding
         with torch.no_grad():
             embedding = model(img_tensor)
         
@@ -276,6 +298,8 @@ def generate_embedding(face_image, model, transform, device):
     
     except Exception as e:
         st.error(f"Embedding generation error: {e}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 
@@ -671,4 +695,5 @@ def main():
         mode_batch_comparison(model, mtcnn, transform, device, threshold)
 
 
-main()
+if __name__ == "__main__":
+    main()
