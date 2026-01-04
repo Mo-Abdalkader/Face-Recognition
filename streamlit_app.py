@@ -44,25 +44,21 @@ class HybridFaceEncoder(nn.Module):
         super(HybridFaceEncoder, self).__init__()
         
         # Create EMPTY architectures (no pretrained weights)
-        # The trained weights will be loaded from model.pth
         googlenet = self._create_empty_googlenet()
         resnet18 = self._create_empty_resnet18()
         
-        # Extract features properly
-        # GoogleNet architecture ends with: ... → avgpool → dropout → fc
-        # We need: everything up to and including dropout (before fc)
-        # ResNet18 architecture ends with: ... → avgpool → fc
-        # We need: everything up to and including avgpool (before fc)
+        # GoogleNet: We can't just use children()[:-1] because of auxiliary classifiers
+        # Instead, manually build the feature extractor
+        # GoogleNet structure: conv blocks → inception blocks → avgpool → dropout → fc
+        # We need everything EXCEPT the fc layer at the end
         
-        # For GoogleNet: children are [conv1, maxpool1, conv2, ..., inception5b, avgpool, dropout, fc]
-        # We want all except the final 'fc' layer
-        googlenet_layers = list(googlenet.children())
-        self.googlenet_features = nn.Sequential(*googlenet_layers[:-1])  # Includes avgpool and dropout
+        # Store the googlenet model itself for proper forward pass
+        self.googlenet = googlenet
         
-        # For ResNet18: children are [conv1, bn1, relu, maxpool, layer1, layer2, layer3, layer4, avgpool, fc]
-        # We want all except the final 'fc' layer
+        # For ResNet18: Standard approach works fine
+        # ResNet structure: conv layers → residual blocks → avgpool → fc
         resnet_layers = list(resnet18.children())
-        self.resnet_features = nn.Sequential(*resnet_layers[:-1])  # Includes avgpool
+        self.resnet_features = nn.Sequential(*resnet_layers[:-1])
         
         # Fusion layer: 1024 (GoogleNet) + 512 (ResNet) = 1536
         self.fusion = nn.Sequential(
@@ -95,26 +91,43 @@ class HybridFaceEncoder(nn.Module):
         return resnet18
     
     def forward(self, x):
-        # GoogleNet features
-        # GoogleNet architecture: conv layers → inception modules → avgpool → dropout → fc
-        # We want output BEFORE the final FC layer (after avgpool and dropout)
-        # This gives us 1024-dim features
-        googlenet_out = self.googlenet_features(x)  # Output: [B, 1024, 1, 1] or [B, 1024]
+        # GoogleNet features - Use the model's forward but extract features before FC
+        # GoogleNet has: conv → inception blocks → avgpool → dropout → fc
+        # We want output after dropout, before fc (1024-dim)
         
-        # Flatten if needed
-        if len(googlenet_out.shape) == 4:  # [B, 1024, 1, 1]
-            googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)  # [B, 1024]
-        elif len(googlenet_out.shape) == 2:  # Already [B, 1024]
-            pass
-        else:
-            # Unexpected shape, flatten everything except batch dimension
-            googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)
+        # Process through GoogleNet manually up to before the FC layer
+        x_g = x
         
-        # ResNet features
-        # ResNet architecture: conv layers → residual blocks → avgpool → fc
-        # We want output BEFORE the final FC layer (after avgpool)
-        # This gives us 512-dim features
-        resnet_out = self.resnet_features(x)  # Output: [B, 512, 1, 1]
+        # Initial conv layers
+        x_g = self.googlenet.conv1(x_g)
+        x_g = self.googlenet.maxpool1(x_g)
+        x_g = self.googlenet.conv2(x_g)
+        x_g = self.googlenet.conv3(x_g)
+        x_g = self.googlenet.maxpool2(x_g)
+        
+        # Inception blocks
+        x_g = self.googlenet.inception3a(x_g)
+        x_g = self.googlenet.inception3b(x_g)
+        x_g = self.googlenet.maxpool3(x_g)
+        x_g = self.googlenet.inception4a(x_g)
+        x_g = self.googlenet.inception4b(x_g)
+        x_g = self.googlenet.inception4c(x_g)
+        x_g = self.googlenet.inception4d(x_g)
+        x_g = self.googlenet.inception4e(x_g)
+        x_g = self.googlenet.maxpool4(x_g)
+        x_g = self.googlenet.inception5a(x_g)
+        x_g = self.googlenet.inception5b(x_g)
+        
+        # Avgpool and dropout (but NOT fc)
+        x_g = self.googlenet.avgpool(x_g)
+        x_g = torch.flatten(x_g, 1)
+        x_g = self.googlenet.dropout(x_g)
+        
+        # Now x_g should be [B, 1024]
+        googlenet_out = x_g
+        
+        # ResNet features - Standard extraction works fine
+        resnet_out = self.resnet_features(x)
         resnet_out = resnet_out.view(resnet_out.size(0), -1)  # [B, 512]
         
         # Concatenate and fuse - [B, 1536]
@@ -219,15 +232,41 @@ def load_model():
                     # Debug: Check intermediate outputs
                     with st.expander("🔍 Architecture Debug Info"):
                         try:
-                            # Test GoogleNet features
-                            gnet_out = model.googlenet_features(test_input)
-                            st.write(f"GoogleNet output shape: {gnet_out.shape}")
+                            # Test GoogleNet features manually
+                            x_g = test_input
+                            x_g = model.googlenet.conv1(x_g)
+                            x_g = model.googlenet.maxpool1(x_g)
+                            x_g = model.googlenet.conv2(x_g)
+                            x_g = model.googlenet.conv3(x_g)
+                            x_g = model.googlenet.maxpool2(x_g)
+                            x_g = model.googlenet.inception3a(x_g)
+                            x_g = model.googlenet.inception3b(x_g)
+                            x_g = model.googlenet.maxpool3(x_g)
+                            x_g = model.googlenet.inception4a(x_g)
+                            x_g = model.googlenet.inception4b(x_g)
+                            x_g = model.googlenet.inception4c(x_g)
+                            x_g = model.googlenet.inception4d(x_g)
+                            x_g = model.googlenet.inception4e(x_g)
+                            x_g = model.googlenet.maxpool4(x_g)
+                            x_g = model.googlenet.inception5a(x_g)
+                            x_g = model.googlenet.inception5b(x_g)
+                            x_g = model.googlenet.avgpool(x_g)
+                            x_g = torch.flatten(x_g, 1)
+                            x_g = model.googlenet.dropout(x_g)
+                            st.write(f"GoogleNet output shape: {x_g.shape}")
                             
                             # Test ResNet features
                             rnet_out = model.resnet_features(test_input)
+                            rnet_out = rnet_out.view(rnet_out.size(0), -1)
                             st.write(f"ResNet output shape: {rnet_out.shape}")
+                            
+                            # Test concatenation
+                            combined = torch.cat([x_g, rnet_out], dim=1)
+                            st.write(f"Combined shape: {combined.shape}")
                         except Exception as debug_e:
                             st.write(f"Debug error: {debug_e}")
+                            import traceback
+                            st.code(traceback.format_exc())
                     
                     test_output = model(test_input)
                     
@@ -241,15 +280,7 @@ def load_model():
                 st.error(f"❌ Model verification failed: {e}")
                 
                 # Enhanced debug info
-                with st.expander("🔍 Detailed Architecture Info"):
-                    st.write("**GoogleNet layers:**")
-                    for i, layer in enumerate(list(model.googlenet_features.children())):
-                        st.write(f"  {i}: {layer.__class__.__name__}")
-                    
-                    st.write("**ResNet layers:**")
-                    for i, layer in enumerate(list(model.resnet_features.children())):
-                        st.write(f"  {i}: {layer.__class__.__name__}")
-                    
+                with st.expander("🔍 Detailed Error Info"):
                     st.write("**Error details:**")
                     st.code(str(e))
                     
