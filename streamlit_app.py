@@ -1,6 +1,6 @@
 """
 AI Face Recognition System - Production Streamlit App
-Clean implementation with no dependency conflicts
+Optimized for Streamlit Cloud deployment
 """
 
 import streamlit as st
@@ -30,29 +30,21 @@ st.set_page_config(
 )
 
 # ==================================================================================
-# MODEL ARCHITECTURE (Embedded directly - no external dependencies)
+# MODEL ARCHITECTURE
 # ==================================================================================
 
 class HybridFaceEncoder(nn.Module):
     """
     Hybrid GoogleNet + ResNet18 Face Encoder
-    Matches training architecture WITHOUT downloading pretrained weights
+    Uses cached pretrained models from files/pretrained_models/
     """
     
     def __init__(self, embedding_dim=512, dropout=0.3):
         super(HybridFaceEncoder, self).__init__()
         
-        # Use new weights API to avoid deprecation warnings
-        # weights=None means no pretrained weights, just the architecture
-        try:
-            # Try new API (torchvision >= 0.13)
-            from torchvision.models import GoogLeNet_Weights, ResNet18_Weights
-            googlenet = models.googlenet(weights=None)
-            resnet18 = models.resnet18(weights=None)
-        except ImportError:
-            # Fallback to old API
-            googlenet = models.googlenet(pretrained=False)
-            resnet18 = models.resnet18(pretrained=False)
+        # Load from cached pretrained models (already in repo)
+        googlenet = self._load_cached_googlenet()
+        resnet18 = self._load_cached_resnet18()
         
         # Extract features (everything except the final FC layer)
         self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
@@ -67,6 +59,50 @@ class HybridFaceEncoder(nn.Module):
         )
         
         self.embedding_dim = embedding_dim
+    
+    def _load_cached_googlenet(self):
+        """Load GoogleNet from cached pretrained weights"""
+        cache_path = Path("files/pretrained_models/googlenet_pretrained.pth")
+        
+        # Create empty architecture
+        try:
+            # Try new API first
+            googlenet = models.googlenet(weights=None, init_weights=False)
+        except TypeError:
+            # Fallback to old API
+            googlenet = models.googlenet(pretrained=False, init_weights=False)
+        
+        # Load cached weights if they exist
+        if cache_path.exists():
+            try:
+                state_dict = torch.load(cache_path, map_location='cpu')
+                googlenet.load_state_dict(state_dict, strict=False)
+            except Exception as e:
+                st.warning(f"Could not load cached GoogleNet weights: {e}")
+        
+        return googlenet
+    
+    def _load_cached_resnet18(self):
+        """Load ResNet18 from cached pretrained weights"""
+        cache_path = Path("files/pretrained_models/resnet18_pretrained.pth")
+        
+        # Create empty architecture
+        try:
+            # Try new API first
+            resnet18 = models.resnet18(weights=None)
+        except TypeError:
+            # Fallback to old API
+            resnet18 = models.resnet18(pretrained=False)
+        
+        # Load cached weights if they exist
+        if cache_path.exists():
+            try:
+                state_dict = torch.load(cache_path, map_location='cpu')
+                resnet18.load_state_dict(state_dict, strict=False)
+            except Exception as e:
+                st.warning(f"Could not load cached ResNet18 weights: {e}")
+        
+        return resnet18
     
     def forward(self, x):
         # GoogleNet features
@@ -88,7 +124,7 @@ class HybridFaceEncoder(nn.Module):
 
 
 # ==================================================================================
-# MTCNN FACE DETECTION (Simplified - using facenet_pytorch)
+# FACE DETECTION
 # ==================================================================================
 
 @st.cache_resource
@@ -134,10 +170,8 @@ def load_model():
             try:
                 checkpoint = torch.load(model_path, map_location=device, weights_only=False)
             except Exception:
-                # Fallback for numpy objects in checkpoint
-                import numpy as np
-                with torch.serialization.safe_globals([np.core.multiarray.scalar]):
-                    checkpoint = torch.load(model_path, map_location=device)
+                # Fallback for older PyTorch versions
+                checkpoint = torch.load(model_path, map_location=device)
             
             # Extract state dict from checkpoint
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
@@ -146,21 +180,19 @@ def load_model():
                 state_dict = checkpoint
             
             # Load the trained weights
-            # Use strict=False because aux classifiers (layers 16,17) might have different structure
-            # These layers are not used during inference anyway
+            # Use strict=False because aux classifiers might differ
             missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
             
-            # Filter out expected missing keys (aux classifiers)
-            actual_missing = [k for k in missing_keys if 'googlenet_features.16' not in k and 'googlenet_features.17' not in k]
+            # Check for critical missing keys (ignore aux classifiers)
+            critical_missing = [k for k in missing_keys 
+                              if 'aux' not in k.lower() and 'googlenet_features.16' not in k 
+                              and 'googlenet_features.17' not in k]
             
-            if actual_missing:
-                st.error(f"❌ Critical weights missing: {actual_missing[:5]}")
+            if critical_missing:
+                st.error(f"❌ Critical weights missing: {critical_missing[:5]}")
                 st.stop()
             
-            # Success message
-            if missing_keys:
-                st.info(f"ℹ️ Skipped {len(missing_keys)} auxiliary classifier layers (not needed for inference)")
-            
+            # Move to device and set to eval mode
             model.to(device)
             model.eval()
             torch.set_grad_enabled(False)
@@ -172,7 +204,6 @@ def load_model():
     except Exception as e:
         st.error(f"❌ Failed to load model: {e}")
         
-        # Show helpful debug info
         with st.expander("🔍 Debug Information"):
             st.write("**Error details:**")
             st.code(str(e))
@@ -198,7 +229,7 @@ def get_image_transform():
 
 
 # ==================================================================================
-# FACE DETECTION & EMBEDDING GENERATION
+# CORE FUNCTIONS
 # ==================================================================================
 
 def detect_faces(image, mtcnn):
@@ -236,10 +267,8 @@ def detect_faces(image, mtcnn):
 def generate_embedding(face_image, model, transform, device):
     """Generate embedding for a face image"""
     try:
-        # Preprocess
         img_tensor = transform(face_image).unsqueeze(0).to(device)
         
-        # Generate embedding
         with torch.no_grad():
             embedding = model(img_tensor)
         
@@ -376,9 +405,9 @@ def mode_two_image_comparison(model, mtcnn, transform, device, threshold):
         
         col1, col2 = st.columns(2)
         with col1:
-            st.image(img1, use_container_width=True)
+            st.image(img1, width=400)
         with col2:
-            st.image(img2, use_container_width=True)
+            st.image(img2, width=400)
         
         if st.button("🚀 Compare Faces", type="primary", use_container_width=True):
             with st.spinner("Analyzing..."):
@@ -419,7 +448,7 @@ def mode_two_image_comparison(model, mtcnn, transform, device, threshold):
                 # Visual comparison
                 st.subheader("📊 Visual Comparison")
                 comparison = create_comparison_image(img1, img2, faces1, faces2, similarity, threshold)
-                st.image(comparison, use_container_width=True)
+                st.image(comparison, width=1200)
                 
                 # Download
                 buf = io.BytesIO()
@@ -440,7 +469,7 @@ def mode_multi_face_analysis(model, mtcnn, transform, device, threshold):
     
     if uploaded_file:
         image = Image.open(uploaded_file).convert('RGB')
-        st.image(image, use_container_width=True)
+        st.image(image, width=800)
         
         if st.button("🔍 Analyze Faces", type="primary", use_container_width=True):
             with st.spinner("Detecting faces..."):
@@ -455,7 +484,7 @@ def mode_multi_face_analysis(model, mtcnn, transform, device, threshold):
                 # Annotated image
                 st.subheader("📍 Detected Faces")
                 annotated = draw_faces_on_image(image, faces)
-                st.image(annotated, use_container_width=True)
+                st.image(annotated, width=800)
                 
                 # Face grid
                 st.subheader("🖼️ Extracted Faces")
@@ -642,5 +671,4 @@ def main():
         mode_batch_comparison(model, mtcnn, transform, device, threshold)
 
 
-if __name__ == "__main__":
-    main()
+main()
