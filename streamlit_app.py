@@ -1,6 +1,14 @@
 """
-AI Face Recognition System - Production Streamlit App
-Optimized for Streamlit Cloud deployment
+Face Recognition Streamlit Application
+Lightweight deployment without database
+
+FEATURES:
+1. Compare Two Faces - Calculate similarity between two images
+2. Compare Multiple Faces - Find most similar faces to reference
+3. Face Verification - Batch verification with threshold
+4. Live Similarity Matrix - Visual comparison grid
+
+Author: Streamlit Deployment Version
 """
 
 import streamlit as st
@@ -8,54 +16,39 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms, models
+import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-import io
-from datetime import datetime
-from pathlib import Path
+from PIL import Image
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
-from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
+import plotly.graph_objects as go
+from io import BytesIO
+import base64
 
-# ==================================================================================
-# PAGE CONFIG
-# ==================================================================================
+# Page config
 st.set_page_config(
-    page_title="AI Face Recognition",
-    page_icon="🎯",
+    page_title="Face Recognition System",
+    page_icon="👤",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ==================================================================================
-# MODEL ARCHITECTURE (Matches Training Code EXACTLY)
-# ==================================================================================
+# =============================================================================
+# MODEL ARCHITECTURE (Must match training)
+# =============================================================================
 
 class HybridFaceEncoder(nn.Module):
-    """
-    Hybrid GoogleNet + ResNet18 Face Encoder
-    EXACT architecture from training - loads cached pretrained backbones
-    """
+    """GoogleNet + ResNet-18 hybrid encoder"""
     
-    def __init__(self, embedding_dim=512, dropout=0.3):
+    def __init__(self, embedding_dim: int = 512, dropout: float = 0.5):
         super(HybridFaceEncoder, self).__init__()
         
-        # Path to cached pretrained models
-        self.cache_dir = Path("files/pretrained_models")
-        
-        print("Loading model architecture...")
-        
-        # Load GoogleNet and ResNet18 with cached weights
-        googlenet = self._load_googlenet()
-        resnet18 = self._load_resnet18()
-        
-        # Extract features (everything except the final FC layer)
+        googlenet = models.googlenet(pretrained=False)
         self.googlenet_features = nn.Sequential(*list(googlenet.children())[:-1])
+        
+        resnet18 = models.resnet18(pretrained=False)
         self.resnet_features = nn.Sequential(*list(resnet18.children())[:-1])
         
-        # Fusion layer: 1024 (GoogleNet) + 512 (ResNet) = 1536
         self.fusion = nn.Sequential(
             nn.Linear(1536, 1024),
             nn.ReLU(),
@@ -64,214 +57,24 @@ class HybridFaceEncoder(nn.Module):
         )
         
         self.embedding_dim = embedding_dim
-        print(f"✓ Hybrid encoder initialized (embedding_dim={embedding_dim})")
     
-    def _load_googlenet(self):
-        """Load GoogleNet from cached pretrained weights"""
-        cache_path = self.cache_dir / "googlenet_pretrained.pth"
-        
-        # Create architecture
-        try:
-            googlenet = models.googlenet(weights=None, init_weights=False)
-        except TypeError:
-            googlenet = models.googlenet(pretrained=False, init_weights=False)
-        
-        # Load cached weights if they exist
-        if cache_path.exists():
-            try:
-                print(f"  Loading GoogleNet from cache: {cache_path}")
-                state_dict = torch.load(cache_path, map_location='cpu', weights_only=False)
-                googlenet.load_state_dict(state_dict, strict=False)
-            except Exception as e:
-                print(f"  Warning: Could not load cached GoogleNet: {e}")
-        else:
-            print(f"  Warning: GoogleNet cache not found at {cache_path}")
-        
-        return googlenet
-    
-    def _load_resnet18(self):
-        """Load ResNet18 from cached pretrained weights"""
-        cache_path = self.cache_dir / "resnet18_pretrained.pth"
-        
-        # Create architecture
-        try:
-            resnet18 = models.resnet18(weights=None)
-        except TypeError:
-            resnet18 = models.resnet18(pretrained=False)
-        
-        # Load cached weights if they exist
-        if cache_path.exists():
-            try:
-                print(f"  Loading ResNet18 from cache: {cache_path}")
-                state_dict = torch.load(cache_path, map_location='cpu', weights_only=False)
-                resnet18.load_state_dict(state_dict, strict=False)
-            except Exception as e:
-                print(f"  Warning: Could not load cached ResNet18: {e}")
-        else:
-            print(f"  Warning: ResNet18 cache not found at {cache_path}")
-        
-        return resnet18
-    
-    def forward(self, x):
-        # GoogleNet features
-        googlenet_out = self.googlenet_features(x)
-        googlenet_out = googlenet_out.view(googlenet_out.size(0), -1)
-        
-        # ResNet features  
-        resnet_out = self.resnet_features(x)
-        resnet_out = resnet_out.view(resnet_out.size(0), -1)
-        
-        # Concatenate and fuse
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        googlenet_out = self.googlenet_features(x).view(x.size(0), -1)
+        resnet_out = self.resnet_features(x).view(x.size(0), -1)
         combined = torch.cat([googlenet_out, resnet_out], dim=1)
         embedding = self.fusion(combined)
-        
-        # L2 normalize
-        embedding = F.normalize(embedding, p=2, dim=1)
-        
-        return embedding
+        return F.normalize(embedding, p=2, dim=1)
 
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
 
-# ==================================================================================
-# FACE DETECTION
-# ==================================================================================
+def get_device():
+    """Safe device detection"""
+    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-@st.cache_resource
-def load_face_detector():
-    """Load MTCNN face detector"""
-    try:
-        from facenet_pytorch import MTCNN
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        mtcnn = MTCNN(
-            keep_all=True,
-            device=device,
-            min_face_size=40,
-            thresholds=[0.6, 0.7, 0.7]
-        )
-        return mtcnn
-    except Exception as e:
-        st.error(f"Failed to load face detector: {e}")
-        return None
-
-
-# ==================================================================================
-# MODEL LOADING
-# ==================================================================================
-
-@st.cache_resource
-def load_model():
-    """Load the trained face recognition model"""
-    model_path = Path("files/model.pth")
-    
-    if not model_path.exists():
-        st.error(f"❌ Model not found at {model_path}")
-        st.info("Please ensure 'files/model.pth' exists in your repository")
-        st.stop()
-    
-    try:
-        with st.spinner("🚀 Loading AI model..."):
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            
-            # Initialize EMPTY model architecture
-            model = HybridFaceEncoder(embedding_dim=512, dropout=0.3)
-            
-            # Load the trained checkpoint (contains ALL weights)
-            try:
-                checkpoint = torch.load(model_path, map_location=device, weights_only=False)
-            except Exception:
-                # Fallback for older PyTorch versions
-                checkpoint = torch.load(model_path, map_location=device)
-            
-            # Extract state dict from checkpoint
-            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-                state_dict = checkpoint['model_state_dict']
-                st.info(f"📦 Loaded checkpoint from epoch {checkpoint.get('epoch', 'unknown')}")
-            else:
-                state_dict = checkpoint
-            
-            # Load ALL the trained weights (backbones + fusion layers)
-            # Use strict=False to handle auxiliary classifiers gracefully
-            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-            
-            # Check for critical missing keys (ignore aux classifiers)
-            critical_missing = [k for k in missing_keys 
-                              if 'aux' not in k.lower() 
-                              and 'googlenet_features.16' not in k 
-                              and 'googlenet_features.17' not in k]
-            
-            if critical_missing:
-                st.error(f"❌ Critical weights missing: {critical_missing[:10]}")
-                with st.expander("🔍 See all missing keys"):
-                    st.write(critical_missing)
-                st.stop()
-            
-            # Show info about skipped layers
-            if missing_keys:
-                aux_count = len([k for k in missing_keys if 'aux' in k.lower() or 'googlenet_features.16' in k or 'googlenet_features.17' in k])
-                if aux_count > 0:
-                    st.info(f"ℹ️ Skipped {aux_count} auxiliary classifier layers (not needed for inference)")
-            
-            # Move to device and set to eval mode
-            model.to(device)
-            model.eval()
-            torch.set_grad_enabled(False)
-            
-            # Verify architecture by doing a test forward pass
-            try:
-                with torch.no_grad():
-                    test_input = torch.randn(1, 3, 224, 224).to(device)
-                    test_output = model(test_input)
-                    
-                    if test_output.shape[1] != 512:
-                        st.error(f"❌ Model output dimension mismatch! Expected 512, got {test_output.shape[1]}")
-                        st.stop()
-                    
-                    st.success(f"✅ Model loaded successfully on {device}!")
-                    st.info(f"✓ Output embedding dimension: {test_output.shape[1]}")
-            except Exception as e:
-                st.error(f"❌ Model verification failed: {e}")
-                
-                with st.expander("🔍 Detailed Error Info"):
-                    st.write("**Error details:**")
-                    st.code(str(e))
-                    
-                    import traceback
-                    st.write("**Traceback:**")
-                    st.code(traceback.format_exc())
-                
-                st.stop()
-            
-            return model, device
-    
-    except Exception as e:
-        st.error(f"❌ Failed to load model: {e}")
-        
-        with st.expander("🔍 Debug Information"):
-            st.write("**Error details:**")
-            st.code(str(e))
-            st.write("**Model path:**", model_path)
-            st.write("**File exists:**", model_path.exists())
-            if model_path.exists():
-                st.write("**File size:**", f"{model_path.stat().st_size / 1024 / 1024:.1f} MB")
-            
-            # Try to load and inspect checkpoint structure
-            try:
-                checkpoint = torch.load(model_path, map_location='cpu')
-                st.write("**Checkpoint type:**", type(checkpoint))
-                if isinstance(checkpoint, dict):
-                    st.write("**Checkpoint keys:**", list(checkpoint.keys()))
-                    if 'model_state_dict' in checkpoint:
-                        state_dict = checkpoint['model_state_dict']
-                        st.write("**Model state dict keys (first 20):**")
-                        st.write(list(state_dict.keys())[:20])
-            except Exception as debug_e:
-                st.write("**Could not inspect checkpoint:**", str(debug_e))
-        
-        st.stop()
-
-
-@st.cache_resource
 def get_image_transform():
-    """Get image preprocessing transform"""
+    """Image preprocessing pipeline"""
     return transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -281,457 +84,499 @@ def get_image_transform():
         )
     ])
 
-
-# ==================================================================================
-# CORE FUNCTIONS
-# ==================================================================================
-
-def detect_faces(image, mtcnn):
-    """Detect all faces in image"""
+def load_and_preprocess_image(uploaded_file):
+    """Load image from uploaded file"""
     try:
-        img_array = np.array(image)
-        boxes, probs = mtcnn.detect(img_array)
-        
-        if boxes is None:
-            return []
-        
-        faces_info = []
-        for box, prob in zip(boxes, probs):
-            if prob > 0.9:  # Confidence threshold
-                x1, y1, x2, y2 = [int(coord) for coord in box]
-                x1, y1 = max(0, x1), max(0, y1)
-                x2 = min(image.width, x2)
-                y2 = min(image.height, y2)
-                
-                face_crop = image.crop((x1, y1, x2, y2))
-                
-                faces_info.append({
-                    'box': [x1, y1, x2, y2],
-                    'confidence': float(prob),
-                    'crop': face_crop
-                })
-        
-        return faces_info
-    
+        image = Image.open(uploaded_file).convert('RGB')
+        return image
     except Exception as e:
-        st.error(f"Face detection error: {e}")
-        return []
+        st.error(f"Error loading image: {e}")
+        return None
 
-
-def generate_embedding(face_image, model, transform, device):
-    """Generate embedding for a face image"""
+def generate_embedding(model, image, transform, device):
+    """Generate embedding for single image"""
     try:
-        # Ensure RGB
-        if face_image.mode != 'RGB':
-            face_image = face_image.convert('RGB')
-        
-        # Preprocess
-        img_tensor = transform(face_image).unsqueeze(0).to(device)
-        
-        # Generate embedding
+        img_tensor = transform(image).unsqueeze(0).to(device)
         with torch.no_grad():
             embedding = model(img_tensor)
-        
         return embedding.cpu().numpy().flatten()
-    
     except Exception as e:
-        st.error(f"Embedding generation error: {e}")
-        import traceback
-        st.error(traceback.format_exc())
+        st.error(f"Error generating embedding: {e}")
         return None
 
-
-def calculate_similarity(emb1, emb2):
-    """Calculate cosine similarity"""
+def cosine_similarity(emb1, emb2):
+    """Calculate cosine similarity (embeddings are already normalized)"""
     return float(np.dot(emb1, emb2))
 
-
-# ==================================================================================
-# VISUALIZATION FUNCTIONS
-# ==================================================================================
-
-def draw_faces_on_image(image, faces_info):
-    """Draw bounding boxes on image"""
-    img_draw = image.copy()
-    draw = ImageDraw.Draw(img_draw)
-    
-    for idx, face_info in enumerate(faces_info):
-        box = face_info['box']
-        confidence = face_info['confidence']
-        
-        color = (0, 255, 0) if confidence > 0.95 else (255, 165, 0)
-        draw.rectangle(box, outline=color, width=3)
-        
-        label = f"Face {idx+1} ({confidence:.1%})"
-        draw.text((box[0], box[1]-20), label, fill=color)
-    
-    return img_draw
-
-
-def create_comparison_image(img1, img2, faces1, faces2, similarity, threshold):
-    """Create side-by-side comparison"""
-    img1_ann = draw_faces_on_image(img1, faces1)
-    img2_ann = draw_faces_on_image(img2, faces2)
-    
-    # Resize
-    max_h = 600
-    img1_ann.thumbnail((1000, max_h), Image.Resampling.LANCZOS)
-    img2_ann.thumbnail((1000, max_h), Image.Resampling.LANCZOS)
-    
-    # Combine
-    total_w = img1_ann.width + img2_ann.width + 60
-    max_height = max(img1_ann.height, img2_ann.height)
-    combined = Image.new('RGB', (total_w, max_height + 100), 'white')
-    
-    combined.paste(img1_ann, (20, 50))
-    combined.paste(img2_ann, (img1_ann.width + 40, 50))
-    
-    # Add text
-    draw = ImageDraw.Draw(combined)
-    match_status = "✅ MATCH" if similarity >= threshold else "❌ NO MATCH"
-    color = (0, 128, 0) if similarity >= threshold else (255, 0, 0)
-    text = f"Similarity: {similarity:.1%} | Threshold: {threshold:.1%} | {match_status}"
-    draw.text((50, 10), text, fill=color)
-    
-    return combined
-
-
-def create_heatmap(similarities, labels):
-    """Create similarity heatmap"""
-    fig = go.Figure(data=go.Heatmap(
-        z=similarities,
-        x=labels,
-        y=labels,
-        colorscale='RdYlGn',
-        zmin=0, zmax=1,
-        text=np.round(similarities, 3),
-        texttemplate='%{text}',
-        colorbar=dict(title="Similarity")
-    ))
-    fig.update_layout(title="Face Similarity Heatmap", height=500)
-    return fig
-
-
-def create_embedding_plot(embeddings, labels):
-    """Create embedding visualization"""
-    if len(embeddings) < 2:
-        return None
-    
-    embeddings_array = np.array(embeddings)
-    
-    if len(embeddings) <= 3:
-        reducer = PCA(n_components=2)
+def get_similarity_color(similarity):
+    """Get color based on similarity score"""
+    if similarity >= 0.7:
+        return "green"
+    elif similarity >= 0.5:
+        return "orange"
     else:
-        reducer = TSNE(n_components=2, random_state=42, perplexity=min(5, len(embeddings)-1))
-    
-    reduced = reducer.fit_transform(embeddings_array)
-    
-    fig = go.Figure()
-    unique_labels = list(set(labels))
-    colors = px.colors.qualitative.Set1[:len(unique_labels)]
-    
-    for i, label in enumerate(unique_labels):
-        mask = [l == label for l in labels]
-        fig.add_trace(go.Scatter(
-            x=reduced[mask, 0],
-            y=reduced[mask, 1],
-            mode='markers+text',
-            name=label,
-            text=[f"{label} {j+1}" for j in range(sum(mask))],
-            textposition="top center",
-            marker=dict(size=15, color=colors[i])
-        ))
-    
-    fig.update_layout(title="Embedding Space", height=500)
-    return fig
+        return "red"
 
+def get_similarity_label(similarity):
+    """Get label based on similarity score"""
+    if similarity >= 0.7:
+        return "✅ Very Similar (Match)"
+    elif similarity >= 0.5:
+        return "⚠️ Possibly Similar"
+    else:
+        return "❌ Different (No Match)"
 
-# ==================================================================================
-# APP MODES
-# ==================================================================================
+# =============================================================================
+# MODEL LOADING (CACHED)
+# =============================================================================
 
-def mode_two_image_comparison(model, mtcnn, transform, device, threshold):
-    """Two-image comparison mode"""
-    st.header("🔍 Two-Image Face Comparison")
+@st.cache_resource
+def load_model():
+    """Load trained model (cached for performance)"""
+    try:
+        device = get_device()
+        
+        # Try loading inference model first
+        try:
+            checkpoint = torch.load(
+                'inference_model.pth',
+                map_location=device,
+                weights_only=False
+            )
+            st.sidebar.success("✓ Loaded inference_model.pth")
+        except FileNotFoundError:
+            # Fallback to best_model.pth
+            checkpoint = torch.load(
+                'best_model.pth',
+                map_location=device,
+                weights_only=False
+            )
+            st.sidebar.success("✓ Loaded best_model.pth")
+        
+        # Extract config
+        config = checkpoint.get('config', {})
+        embedding_dim = config.get('embedding_dim', 512)
+        dropout = config.get('dropout_rate', 0.5)
+        
+        # Initialize model
+        model = HybridFaceEncoder(
+            embedding_dim=embedding_dim,
+            dropout=dropout
+        )
+        
+        # Load weights
+        model.load_state_dict(checkpoint['model_state_dict'])
+        model.to(device)
+        model.eval()
+        
+        st.sidebar.info(f"🖥️ Device: {device}")
+        st.sidebar.info(f"📊 Embedding Dim: {embedding_dim}")
+        
+        return model, device
+        
+    except Exception as e:
+        st.error(f"❌ Error loading model: {e}")
+        st.error("Please ensure 'inference_model.pth' or 'best_model.pth' is in the app directory")
+        st.stop()
+
+# =============================================================================
+# FEATURE 1: COMPARE TWO FACES
+# =============================================================================
+
+def feature_compare_two():
+    st.header("👥 Compare Two Faces")
+    st.markdown("Upload two face images to calculate their similarity score")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        img1_file = st.file_uploader("Upload Image 1", type=['jpg', 'jpeg', 'png'], key='img1')
+        st.subheader("Image 1")
+        img1_file = st.file_uploader("Upload first image", type=['jpg', 'jpeg', 'png'], key="img1")
+        
     with col2:
-        img2_file = st.file_uploader("Upload Image 2", type=['jpg', 'jpeg', 'png'], key='img2')
+        st.subheader("Image 2")
+        img2_file = st.file_uploader("Upload second image", type=['jpg', 'jpeg', 'png'], key="img2")
     
     if img1_file and img2_file:
-        img1 = Image.open(img1_file).convert('RGB')
-        img2 = Image.open(img2_file).convert('RGB')
+        # Load images
+        img1 = load_and_preprocess_image(img1_file)
+        img2 = load_and_preprocess_image(img2_file)
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.image(img1, width=400)
-        with col2:
-            st.image(img2, width=400)
-        
-        if st.button("🚀 Compare Faces", type="primary", use_container_width=True):
-            with st.spinner("Analyzing..."):
-                # Detect faces
-                faces1 = detect_faces(img1, mtcnn)
-                faces2 = detect_faces(img2, mtcnn)
+        if img1 and img2:
+            # Display images
+            col1, col2 = st.columns(2)
+            with col1:
+                st.image(img1, caption="Image 1", use_container_width=True)
+            with col2:
+                st.image(img2, caption="Image 2", use_container_width=True)
+            
+            # Generate embeddings
+            with st.spinner("Analyzing faces..."):
+                model, device = load_model()
+                transform = get_image_transform()
                 
-                if not faces1 or not faces2:
-                    st.error("❌ No faces detected in one or both images!")
-                    return
+                emb1 = generate_embedding(model, img1, transform, device)
+                emb2 = generate_embedding(model, img2, transform, device)
                 
-                # Generate embeddings
-                emb1 = generate_embedding(faces1[0]['crop'], model, transform, device)
-                emb2 = generate_embedding(faces2[0]['crop'], model, transform, device)
-                
-                if emb1 is None or emb2 is None:
-                    st.error("❌ Failed to generate embeddings")
-                    return
-                
-                # Calculate similarity
-                similarity = calculate_similarity(emb1, emb2)
-                
-                # Display results
-                st.markdown("---")
-                
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Similarity", f"{similarity:.1%}")
-                with col2:
-                    st.metric("Threshold", f"{threshold:.1%}")
-                with col3:
-                    match = "✅ Match" if similarity >= threshold else "❌ No Match"
-                    st.metric("Result", match)
-                with col4:
-                    confidence = abs(similarity - threshold) / threshold * 100
-                    st.metric("Confidence", f"{min(confidence, 100):.0f}%")
-                
-                # Visual comparison
-                st.subheader("📊 Visual Comparison")
-                comparison = create_comparison_image(img1, img2, faces1, faces2, similarity, threshold)
-                st.image(comparison, width=1200)
-                
-                # Download
-                buf = io.BytesIO()
-                comparison.save(buf, format='PNG')
-                st.download_button(
-                    "⬇️ Download Comparison",
-                    data=buf.getvalue(),
-                    file_name=f"comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
-                    mime="image/png"
-                )
-
-
-def mode_multi_face_analysis(model, mtcnn, transform, device, threshold):
-    """Multi-face analysis mode"""
-    st.header("📊 Multi-Face Detection & Analysis")
-    
-    uploaded_file = st.file_uploader("Upload image with multiple faces", type=['jpg', 'jpeg', 'png'])
-    
-    if uploaded_file:
-        image = Image.open(uploaded_file).convert('RGB')
-        st.image(image, width=800)
-        
-        if st.button("🔍 Analyze Faces", type="primary", use_container_width=True):
-            with st.spinner("Detecting faces..."):
-                faces = detect_faces(image, mtcnn)
-                
-                if not faces:
-                    st.warning("⚠️ No faces detected!")
-                    return
-                
-                st.success(f"✅ Detected {len(faces)} face(s)!")
-                
-                # Annotated image
-                st.subheader("📍 Detected Faces")
-                annotated = draw_faces_on_image(image, faces)
-                st.image(annotated, width=800)
-                
-                # Face grid
-                st.subheader("🖼️ Extracted Faces")
-                cols = st.columns(min(len(faces), 4))
-                for i, face in enumerate(faces):
-                    with cols[i % 4]:
-                        st.image(face['crop'], caption=f"Face {i+1} ({face['confidence']:.1%})")
-                
-                # Generate embeddings for visualization
-                if len(faces) >= 2:
-                    st.subheader("🎨 Embedding Visualization")
+                if emb1 is not None and emb2 is not None:
+                    similarity = cosine_similarity(emb1, emb2)
                     
-                    embeddings = []
-                    for face in faces:
-                        emb = generate_embedding(face['crop'], model, transform, device)
-                        if emb is not None:
-                            embeddings.append(emb)
+                    # Display results
+                    st.markdown("---")
+                    st.subheader("📊 Similarity Analysis")
                     
-                    if len(embeddings) >= 2:
-                        labels = [f"Face {i+1}" for i in range(len(embeddings))]
-                        
-                        # t-SNE plot
-                        fig = create_embedding_plot(embeddings, labels)
-                        if fig:
-                            st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Heatmap
-                        st.subheader("🔥 Similarity Heatmap")
-                        similarities = np.zeros((len(embeddings), len(embeddings)))
-                        for i in range(len(embeddings)):
-                            for j in range(len(embeddings)):
-                                similarities[i][j] = calculate_similarity(embeddings[i], embeddings[j])
-                        
-                        fig_heat = create_heatmap(similarities, labels)
-                        st.plotly_chart(fig_heat, use_container_width=True)
-
-
-def mode_batch_comparison(model, mtcnn, transform, device, threshold):
-    """Batch comparison mode"""
-    st.header("🔄 Batch Face Comparison")
-    
-    st.info("💡 Upload one reference image and multiple comparison images")
-    
-    ref_file = st.file_uploader("Reference Image", type=['jpg', 'jpeg', 'png'], key='ref')
-    comp_files = st.file_uploader("Comparison Images", type=['jpg', 'jpeg', 'png'], 
-                                   accept_multiple_files=True, key='batch')
-    
-    if ref_file and comp_files:
-        st.write(f"📊 Reference: 1 image | Comparisons: {len(comp_files)} images")
-        
-        if st.button("🚀 Start Batch Processing", type="primary", use_container_width=True):
-            with st.spinner("Processing..."):
-                # Process reference
-                ref_img = Image.open(ref_file).convert('RGB')
-                ref_faces = detect_faces(ref_img, mtcnn)
-                
-                if not ref_faces:
-                    st.error("❌ No face in reference image!")
-                    return
-                
-                ref_emb = generate_embedding(ref_faces[0]['crop'], model, transform, device)
-                
-                # Process comparisons
-                results = []
-                progress = st.progress(0)
-                
-                for idx, comp_file in enumerate(comp_files):
-                    comp_img = Image.open(comp_file).convert('RGB')
-                    comp_faces = detect_faces(comp_img, mtcnn)
+                    # Similarity score with color
+                    color = get_similarity_color(similarity)
+                    label = get_similarity_label(similarity)
                     
-                    if comp_faces:
-                        comp_emb = generate_embedding(comp_faces[0]['crop'], model, transform, device)
-                        if comp_emb is not None:
-                            similarity = calculate_similarity(ref_emb, comp_emb)
-                            match = "✅ Match" if similarity >= threshold else "❌ No Match"
-                            
-                            results.append({
-                                'Image': comp_file.name,
-                                'Similarity': f"{similarity:.4f}",
-                                'Percentage': f"{similarity:.1%}",
-                                'Match': match,
-                                'Similarity_Raw': similarity
-                            })
-                    
-                    progress.progress((idx + 1) / len(comp_files))
-                
-                # Display results
-                if results:
-                    results.sort(key=lambda x: x['Similarity_Raw'], reverse=True)
-                    
-                    st.success("✅ Batch processing complete!")
-                    
-                    matches = sum(1 for r in results if "✅" in r['Match'])
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("Total", len(results))
+                    col1, col2, col3 = st.columns([1, 2, 1])
                     with col2:
-                        st.metric("Matches", matches)
+                        st.metric(
+                            label="Similarity Score",
+                            value=f"{similarity:.4f}",
+                            delta=label
+                        )
+                        
+                        # Progress bar
+                        st.progress(similarity)
+                        
+                        # Interpretation
+                        st.markdown(f"**Interpretation:** :{color}[{label}]")
+                        
+                    # Additional stats
+                    st.markdown("---")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Match Confidence", f"{similarity * 100:.1f}%")
+                    with col2:
+                        st.metric("Distance", f"{1 - similarity:.4f}")
                     with col3:
-                        st.metric("Non-Matches", len(results) - matches)
-                    with col4:
-                        avg = np.mean([r['Similarity_Raw'] for r in results])
-                        st.metric("Avg Similarity", f"{avg:.1%}")
-                    
-                    # Table
-                    st.subheader("📊 Results Table")
-                    df = pd.DataFrame(results).drop('Similarity_Raw', axis=1)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    
-                    # Download
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        "⬇️ Download CSV",
-                        data=csv,
-                        file_name=f"batch_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                        mime="text/csv"
-                    )
-                    
-                    # Chart
-                    fig = px.bar(df, x='Image', y='Percentage', color='Match',
-                                color_discrete_map={"✅ Match": "green", "❌ No Match": "red"})
-                    st.plotly_chart(fig, use_container_width=True)
+                        threshold = st.slider("Match Threshold", 0.0, 1.0, 0.6, 0.01)
+                        match = "✅ MATCH" if similarity >= threshold else "❌ NO MATCH"
+                        st.markdown(f"**Result:** {match}")
 
+# =============================================================================
+# FEATURE 2: COMPARE MULTIPLE FACES
+# =============================================================================
 
-# ==================================================================================
-# MAIN APP
-# ==================================================================================
+def feature_compare_multiple():
+    st.header("🔍 Compare Multiple Faces")
+    st.markdown("Upload one reference image and multiple comparison images to find the most similar faces")
+    
+    # Reference image
+    st.subheader("📸 Reference Image")
+    ref_file = st.file_uploader("Upload reference face", type=['jpg', 'jpeg', 'png'], key="ref")
+    
+    if ref_file:
+        ref_img = load_and_preprocess_image(ref_file)
+        if ref_img:
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                st.image(ref_img, caption="Reference Face", use_container_width=True)
+            
+            # Multiple comparison images
+            st.markdown("---")
+            st.subheader("📂 Comparison Images")
+            comp_files = st.file_uploader(
+                "Upload faces to compare (multiple files)",
+                type=['jpg', 'jpeg', 'png'],
+                accept_multiple_files=True,
+                key="comp"
+            )
+            
+            if comp_files:
+                st.info(f"Uploaded {len(comp_files)} images for comparison")
+                
+                if st.button("🚀 Analyze All", type="primary"):
+                    model, device = load_model()
+                    transform = get_image_transform()
+                    
+                    # Generate reference embedding
+                    with st.spinner("Processing reference image..."):
+                        ref_emb = generate_embedding(model, ref_img, transform, device)
+                    
+                    if ref_emb is not None:
+                        results = []
+                        
+                        # Process each comparison image
+                        progress_bar = st.progress(0)
+                        for idx, comp_file in enumerate(comp_files):
+                            comp_img = load_and_preprocess_image(comp_file)
+                            if comp_img:
+                                comp_emb = generate_embedding(model, comp_img, transform, device)
+                                if comp_emb is not None:
+                                    similarity = cosine_similarity(ref_emb, comp_emb)
+                                    results.append({
+                                        'file': comp_file,
+                                        'image': comp_img,
+                                        'similarity': similarity,
+                                        'label': get_similarity_label(similarity)
+                                    })
+                            progress_bar.progress((idx + 1) / len(comp_files))
+                        
+                        # Sort by similarity
+                        results.sort(key=lambda x: x['similarity'], reverse=True)
+                        
+                        # Display results
+                        st.markdown("---")
+                        st.subheader("📊 Ranked Results")
+                        
+                        # Summary statistics
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Total Compared", len(results))
+                        with col2:
+                            avg_sim = np.mean([r['similarity'] for r in results])
+                            st.metric("Average Similarity", f"{avg_sim:.3f}")
+                        with col3:
+                            matches = sum(1 for r in results if r['similarity'] >= 0.6)
+                            st.metric("Matches (>0.6)", matches)
+                        
+                        # Results table
+                        st.markdown("### 🏆 Top Matches")
+                        for rank, result in enumerate(results, 1):
+                            with st.expander(f"#{rank} - {result['file'].name} | Similarity: {result['similarity']:.4f}"):
+                                col1, col2 = st.columns([1, 2])
+                                with col1:
+                                    st.image(result['image'], use_container_width=True)
+                                with col2:
+                                    st.metric("Similarity Score", f"{result['similarity']:.4f}")
+                                    st.progress(result['similarity'])
+                                    st.markdown(f"**Status:** {result['label']}")
+                        
+                        # Visualization
+                        st.markdown("---")
+                        st.subheader("📈 Similarity Distribution")
+                        
+                        # Create bar chart
+                        df = pd.DataFrame({
+                            'Image': [f"Image {i+1}" for i in range(len(results))],
+                            'Similarity': [r['similarity'] for r in results]
+                        })
+                        
+                        fig = px.bar(
+                            df,
+                            x='Image',
+                            y='Similarity',
+                            title='Similarity Scores',
+                            color='Similarity',
+                            color_continuous_scale='RdYlGn'
+                        )
+                        fig.add_hline(y=0.6, line_dash="dash", line_color="red", 
+                                      annotation_text="Match Threshold")
+                        st.plotly_chart(fig, use_container_width=True)
 
-def main():
-    # Custom CSS
-    st.markdown("""
-        <style>
-        .main-header {font-size: 2.5rem; font-weight: bold; text-align: center; margin-bottom: 1rem;}
-        .sub-header {font-size: 1.2rem; text-align: center; color: #666; margin-bottom: 2rem;}
-        </style>
-    """, unsafe_allow_html=True)
+# =============================================================================
+# FEATURE 3: BATCH VERIFICATION
+# =============================================================================
+
+def feature_batch_verification():
+    st.header("✅ Batch Face Verification")
+    st.markdown("Upload multiple face pairs to verify if they match")
     
-    # Header
-    st.markdown('<div class="main-header">🎯 AI Face Recognition System</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Powered by Deep Learning</div>', unsafe_allow_html=True)
+    st.info("💡 Upload pairs: Image1.jpg & Image1_compare.jpg, Image2.jpg & Image2_compare.jpg, etc.")
     
-    # Load components
-    model, device = load_model()
-    mtcnn = load_face_detector()
-    transform = get_image_transform()
-    
-    if mtcnn is None:
-        st.error("❌ Failed to load face detector. Please check dependencies.")
-        st.stop()
-    
-    st.success(f"✅ System Ready! Running on: {device}")
-    
-    # Sidebar
-    st.sidebar.title("⚙️ Settings")
-    
-    mode = st.sidebar.radio(
-        "Select Mode",
-        ["🔍 Two-Image Comparison", 
-         "📊 Multi-Face Analysis", 
-         "🔄 Batch Comparison"]
+    files = st.file_uploader(
+        "Upload all images (pairs should have similar names)",
+        type=['jpg', 'jpeg', 'png'],
+        accept_multiple_files=True,
+        key="batch"
     )
     
-    threshold = st.sidebar.slider(
-        "Similarity Threshold",
-        0.0, 1.0, 0.6, 0.01,
-        help="Faces with similarity above this are considered matches"
+    threshold = st.slider("Verification Threshold", 0.0, 1.0, 0.6, 0.01)
+    
+    if files and len(files) >= 2:
+        if st.button("🔄 Verify All Pairs", type="primary"):
+            model, device = load_model()
+            transform = get_image_transform()
+            
+            # Generate all embeddings
+            embeddings = {}
+            progress_bar = st.progress(0)
+            
+            for idx, file in enumerate(files):
+                img = load_and_preprocess_image(file)
+                if img:
+                    emb = generate_embedding(model, img, transform, device)
+                    if emb is not None:
+                        embeddings[file.name] = {'embedding': emb, 'image': img}
+                progress_bar.progress((idx + 1) / len(files))
+            
+            # Create similarity matrix
+            st.markdown("---")
+            st.subheader("📊 Similarity Matrix")
+            
+            names = list(embeddings.keys())
+            n = len(names)
+            similarity_matrix = np.zeros((n, n))
+            
+            for i, name1 in enumerate(names):
+                for j, name2 in enumerate(names):
+                    if i <= j:
+                        sim = cosine_similarity(
+                            embeddings[name1]['embedding'],
+                            embeddings[name2]['embedding']
+                        )
+                        similarity_matrix[i, j] = sim
+                        similarity_matrix[j, i] = sim
+            
+            # Heatmap
+            fig = go.Figure(data=go.Heatmap(
+                z=similarity_matrix,
+                x=names,
+                y=names,
+                colorscale='RdYlGn',
+                zmid=0.6,
+                text=similarity_matrix,
+                texttemplate='%{text:.3f}',
+                textfont={"size": 10}
+            ))
+            fig.update_layout(
+                title="Face Similarity Heatmap",
+                height=600
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Verification results
+            st.markdown("---")
+            st.subheader("✅ Verification Results")
+            
+            verified_pairs = []
+            for i in range(n):
+                for j in range(i+1, n):
+                    sim = similarity_matrix[i, j]
+                    if sim >= threshold:
+                        verified_pairs.append({
+                            'Pair': f"{names[i]} ↔ {names[j]}",
+                            'Similarity': f"{sim:.4f}",
+                            'Status': '✅ MATCH' if sim >= threshold else '❌ NO MATCH'
+                        })
+            
+            if verified_pairs:
+                st.success(f"Found {len(verified_pairs)} matching pairs!")
+                st.dataframe(pd.DataFrame(verified_pairs), use_container_width=True)
+            else:
+                st.warning("No matching pairs found above threshold")
+
+# =============================================================================
+# FEATURE 4: EMBEDDING EXPLORER
+# =============================================================================
+
+def feature_embedding_explorer():
+    st.header("🧠 Embedding Space Explorer")
+    st.markdown("Visualize face embeddings in 2D space using dimensionality reduction")
+    
+    files = st.file_uploader(
+        "Upload multiple face images to visualize",
+        type=['jpg', 'jpeg', 'png'],
+        accept_multiple_files=True,
+        key="explorer"
+    )
+    
+    if files and len(files) >= 3:
+        if st.button("🎨 Generate Visualization", type="primary"):
+            model, device = load_model()
+            transform = get_image_transform()
+            
+            embeddings_list = []
+            names = []
+            
+            progress_bar = st.progress(0)
+            for idx, file in enumerate(files):
+                img = load_and_preprocess_image(file)
+                if img:
+                    emb = generate_embedding(model, img, transform, device)
+                    if emb is not None:
+                        embeddings_list.append(emb)
+                        names.append(file.name)
+                progress_bar.progress((idx + 1) / len(files))
+            
+            if len(embeddings_list) >= 3:
+                # Simple 2D projection using first 2 principal components
+                from sklearn.decomposition import PCA
+                
+                embeddings_array = np.array(embeddings_list)
+                pca = PCA(n_components=2)
+                embeddings_2d = pca.fit_transform(embeddings_array)
+                
+                # Create scatter plot
+                df = pd.DataFrame({
+                    'x': embeddings_2d[:, 0],
+                    'y': embeddings_2d[:, 1],
+                    'name': names
+                })
+                
+                fig = px.scatter(
+                    df,
+                    x='x',
+                    y='y',
+                    text='name',
+                    title='Face Embeddings in 2D Space (PCA)',
+                    labels={'x': 'Principal Component 1', 'y': 'Principal Component 2'}
+                )
+                fig.update_traces(textposition='top center', marker=dict(size=12))
+                fig.update_layout(height=600)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.info(f"📊 Explained variance: PC1={pca.explained_variance_ratio_[0]:.1%}, PC2={pca.explained_variance_ratio_[1]:.1%}")
+
+# =============================================================================
+# MAIN APP
+# =============================================================================
+
+def main():
+    # Sidebar
+    st.sidebar.title("👤 Face Recognition")
+    st.sidebar.markdown("---")
+    
+    # Feature selection
+    feature = st.sidebar.radio(
+        "Select Feature",
+        [
+            "👥 Compare Two Faces",
+            "🔍 Compare Multiple Faces",
+            "✅ Batch Verification",
+            "🧠 Embedding Explorer"
+        ]
     )
     
     st.sidebar.markdown("---")
+    st.sidebar.markdown("### ℹ️ About")
     st.sidebar.info(
-        "**How it works:**\n"
-        "1. Upload face images\n"
-        "2. AI detects faces\n"
-        "3. Generates 512-dim embeddings\n"
-        "4. Compares similarity scores"
+        "This app uses a hybrid GoogleNet + ResNet-18 "
+        "architecture trained with triplet loss for face recognition."
     )
     
-    # Route to mode
-    if mode == "🔍 Two-Image Comparison":
-        mode_two_image_comparison(model, mtcnn, transform, device, threshold)
-    elif mode == "📊 Multi-Face Analysis":
-        mode_multi_face_analysis(model, mtcnn, transform, device, threshold)
-    elif mode == "🔄 Batch Comparison":
-        mode_batch_comparison(model, mtcnn, transform, device, threshold)
-
+    st.sidebar.markdown("### 📊 Model Info")
+    try:
+        model, device = load_model()
+        # Info already displayed in load_model()
+    except:
+        pass
+    
+    # Main content
+    st.title("🎭 Face Recognition System")
+    st.markdown("*Powered by Deep Learning*")
+    st.markdown("---")
+    
+    # Route to features
+    if feature == "👥 Compare Two Faces":
+        feature_compare_two()
+    elif feature == "🔍 Compare Multiple Faces":
+        feature_compare_multiple()
+    elif feature == "✅ Batch Verification":
+        feature_batch_verification()
+    elif feature == "🧠 Embedding Explorer":
+        feature_embedding_explorer()
+    
+    # Footer
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: gray;'>"
+        "Face Recognition System | Deployment Version"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main()
