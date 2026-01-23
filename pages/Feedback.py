@@ -1,18 +1,17 @@
 """
 FaceMatch Pro - Feedback Page
-Anonymous feedback system with Telegram integration
+Professional feedback system with Telegram integration
 """
 
 import streamlit as st
 from pathlib import Path
 import sys
 
-# Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from config import Config
 from translations import get_text
-from utils.telegram_utils import send_telegram_message, render_telegram_status
+from utils.telegram_utils import send_telegram_message, get_telegram_credentials
 
 
 def get_t(key):
@@ -21,45 +20,64 @@ def get_t(key):
 
 
 def render_star_rating():
-    """Render interactive star rating"""
-    st.markdown("### " + get_t('fb_rating'))
-
-    # Create star rating using columns
-    cols = st.columns(5)
-
+    """Render professional star rating with clear labels"""
+    st.markdown(f"### {get_t('fb_rating')}")
+    
     # Initialize rating in session state
     if 'rating' not in st.session_state:
         st.session_state.rating = 0
 
-    selected_rating = st.session_state.rating
-
-    # Display stars
-    for i, col in enumerate(cols):
-        star_num = i + 1
-        if star_num <= selected_rating:
-            star = "⭐"
+    # Create horizontal layout for rating
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        # Star buttons in a single row
+        star_cols = st.columns(5)
+        
+        for i, col in enumerate(star_cols):
+            star_num = i + 1
+            if star_num <= st.session_state.rating:
+                star = "⭐"
+            else:
+                star = "☆"
+            
+            if col.button(star, key=f"star_{star_num}", use_container_width=True):
+                st.session_state.rating = star_num
+                st.rerun()
+    
+    with col2:
+        # Show rating value and quality
+        if st.session_state.rating > 0:
+            quality_labels = {
+                1: "Poor" if st.session_state.language == 'en' else "ضعيف",
+                2: "Fair" if st.session_state.language == 'en' else "مقبول",
+                3: "Good" if st.session_state.language == 'en' else "جيد",
+                4: "Very Good" if st.session_state.language == 'en' else "جيد جداً",
+                5: "Excellent" if st.session_state.language == 'en' else "ممتاز"
+            }
+            st.markdown(f"""
+            <div style='text-align: center; padding: 0.5rem; 
+                        background: {Config.get_color('primary', 0.1)}; 
+                        border-radius: 8px;'>
+                <div style='font-size: 1.5rem; font-weight: bold; 
+                            color: {Config.COLORS['primary']};'>
+                    {st.session_state.rating}/5
+                </div>
+                <div style='font-size: 0.9rem; color: gray;'>
+                    {quality_labels[st.session_state.rating]}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            star = "☆"
+            st.markdown("""
+            <div style='text-align: center; padding: 0.5rem; color: gray;'>
+                <div style='font-size: 0.9rem;'>
+                    Click stars<br>to rate
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-        if col.button(star, key=f"star_{star_num}", use_container_width=True):
-            st.session_state.rating = star_num
-            st.rerun()
-
-    # Show selected rating
-    if selected_rating > 0:
-        st.markdown(f"""
-        <div style='text-align: center; font-size: 1.5rem; margin-top: 0.5rem;'>
-            {"⭐" * selected_rating} ({selected_rating}/5)
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div style='text-align: center; color: gray; margin-top: 0.5rem;'>
-            Click stars to rate
-        </div>
-        """, unsafe_allow_html=True)
-
-    return selected_rating
+    return st.session_state.rating
 
 
 def main():
@@ -69,48 +87,84 @@ def main():
 
     st.markdown("---")
 
-    # Check Telegram status
-    with st.expander("🔧 Telegram Bot Status"):
-        render_telegram_status()
+    # Professional header with info
+    st.markdown(f"""
+    <div style='background: linear-gradient(135deg, {Config.get_color('primary', 0.1)}, 
+                {Config.get_color('secondary', 0.1)}); 
+                padding: 1.5rem; border-radius: 10px; margin-bottom: 2rem;'>
+        <h3 style='margin: 0; color: {Config.COLORS['primary']};'>
+            📢 We Value Your Feedback
+        </h3>
+        <p style='margin: 0.5rem 0 0 0; font-size: 1rem;'>
+            Help us improve FaceMatch Pro by sharing your thoughts, reporting bugs, 
+            or suggesting new features. Your input makes a difference!
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    st.markdown("---")
-
-    # Feedback form
-    st.markdown(f"## 📝 Feedback Form")
+    # Feedback form in a clean card
+    st.markdown(f"""
+    <div style='background: white; padding: 2rem; border-radius: 10px; 
+                box-shadow: 0 2px 8px rgba(0,0,0,0.1);'>
+    """, unsafe_allow_html=True)
 
     # Name (optional)
-    name = st.text_input(
-        get_t('fb_name'),
-        placeholder=get_t('fb_name_placeholder'),
-        help="Leave blank to send anonymously"
-    )
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        name = st.text_input(
+            f"👤 {get_t('fb_name')}",
+            placeholder=get_t('fb_name_placeholder'),
+            help="Optional - Leave blank to send anonymously"
+        )
+    
+    with col2:
+        # Category with icon
+        categories = Config.FEEDBACK_CATEGORIES[st.session_state.language]
+        category_icons = {
+            'Bug Report': '🐛', 'Feature Request': '💡', 
+            'Suggestion': '📝', 'General': '💬', 'Other': '📌',
+            'تقرير خطأ': '🐛', 'طلب ميزة': '💡',
+            'اقتراح': '📝', 'عام': '💬', 'أخرى': '📌'
+        }
+        category = st.selectbox(
+            f"📂 {get_t('fb_category')}",
+            categories,
+            format_func=lambda x: f"{category_icons.get(x, '📌')} {x}"
+        )
 
     if not name or name.strip() == "":
         name = "Anonymous"
 
-    # Category
-    categories = Config.FEEDBACK_CATEGORIES[st.session_state.language]
-    category = st.selectbox(
-        get_t('fb_category'),
-        categories
-    )
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    # Message
-    message = st.text_area(
-        get_t('fb_message'),
-        placeholder=get_t('fb_message_placeholder'),
-        height=150,
-        help="Tell us what you think, report bugs, or suggest features"
-    )
-
-    # Star rating
+    # Star rating - compact and professional
     rating = render_star_rating()
 
-    # Privacy notice
-    st.info(f"🔒 {get_t('fb_privacy')}")
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    # Buttons
-    col1, col2 = st.columns(2)
+    # Message with character counter
+    message = st.text_area(
+        f"💭 {get_t('fb_message')}",
+        placeholder=get_t('fb_message_placeholder'),
+        height=150,
+        help="Tell us what you think, report bugs, or suggest features",
+        max_chars=1000
+    )
+    
+    # Character counter
+    char_count = len(message) if message else 0
+    st.caption(f"Characters: {char_count}/1000")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Privacy notice - professional
+    st.info(f"🔒 **Privacy:** {get_t('fb_privacy')}")
+
+    # Action buttons - professional layout
+    col1, col2, col3 = st.columns([2, 1, 1])
 
     with col1:
         send_button = st.button(
@@ -124,6 +178,26 @@ def main():
             f"🗑️ {get_t('fb_clear')}",
             use_container_width=True
         )
+    
+    with col3:
+        # Connection status indicator (simplified)
+        bot_token, chat_id = get_telegram_credentials()
+        if bot_token and chat_id:
+            st.markdown("""
+            <div style='text-align: center; padding: 0.5rem; 
+                        background: #28a745; color: white; 
+                        border-radius: 8px; font-size: 0.9rem;'>
+                ✓ Connected
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style='text-align: center; padding: 0.5rem; 
+                        background: #ffc107; color: black; 
+                        border-radius: 8px; font-size: 0.9rem;'>
+                ⚠ Offline
+            </div>
+            """, unsafe_allow_html=True)
 
     # Handle clear button
     if clear_button:
@@ -145,11 +219,13 @@ def main():
                 )
 
             if success:
-                # Success message with animation
+                # Success animation
                 st.balloons()
 
                 st.markdown(f"""
-                <div class='success-box' style='text-align: center; padding: 2rem;'>
+                <div style='background: {Config.get_color('success', 0.1)}; 
+                            border-left: 4px solid {Config.COLORS['success']}; 
+                            padding: 2rem; border-radius: 8px; text-align: center;'>
                     <h2 style='color: {Config.COLORS["success"]}; margin: 0;'>
                         ✅ {get_t('fb_success')}
                     </h2>
@@ -162,19 +238,21 @@ def main():
                 # Reset form
                 st.session_state.rating = 0
 
-                # Show thank you message
+                # Thank you message
                 st.markdown(f"""
                 <div style='text-align: center; padding: 2rem; margin-top: 2rem; 
                             background: {Config.get_color('primary', 0.05)}; 
                             border-radius: 10px;'>
-                    <h3>Thank You! 🙏</h3>
+                    <h3 style='color: {Config.COLORS['primary']};'>Thank You! 🙏</h3>
                     <p>Your feedback helps us improve FaceMatch Pro</p>
                 </div>
                 """, unsafe_allow_html=True)
 
             else:
                 st.markdown(f"""
-                <div class='error-box' style='text-align: center; padding: 2rem;'>
+                <div style='background: {Config.get_color('danger', 0.1)}; 
+                            border-left: 4px solid {Config.COLORS['danger']}; 
+                            padding: 2rem; border-radius: 8px; text-align: center;'>
                     <h2 style='color: {Config.COLORS["danger"]}; margin: 0;'>
                         ❌ {get_t('fb_error')}
                     </h2>
@@ -184,63 +262,124 @@ def main():
                 </div>
                 """, unsafe_allow_html=True)
 
-    # Feedback guidelines
+    # Feedback guidelines - professional cards
     st.markdown("---")
-
     st.markdown("### 💡 Feedback Guidelines")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("""
-        **🐛 Bug Report:**
-        - Describe what happened
-        - Steps to reproduce
-        - Expected vs actual behavior
-        - Browser/device info (optional)
-
-        **💡 Feature Request:**
-        - Describe the feature
-        - Explain why it's useful
-        - Provide examples if possible
-        """)
+        st.markdown(f"""
+        <div style='background: {Config.get_color('primary', 0.05)}; 
+                    padding: 1.5rem; border-radius: 8px; 
+                    border-left: 4px solid {Config.COLORS['primary']};'>
+            <h4 style='margin: 0 0 1rem 0; color: {Config.COLORS['primary']};'>
+                🐛 Bug Report
+            </h4>
+            <ul style='margin: 0; padding-left: 1.5rem;'>
+                <li>Describe what happened</li>
+                <li>Steps to reproduce</li>
+                <li>Expected vs actual behavior</li>
+                <li>Browser/device info (optional)</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div style='background: {Config.get_color('info', 0.05)}; 
+                    padding: 1.5rem; border-radius: 8px; 
+                    border-left: 4px solid {Config.COLORS['info']};'>
+            <h4 style='margin: 0 0 1rem 0; color: {Config.COLORS['info']};'>
+                📝 Suggestion
+            </h4>
+            <ul style='margin: 0; padding-left: 1.5rem;'>
+                <li>UI/UX improvements</li>
+                <li>Performance enhancements</li>
+                <li>Workflow optimizations</li>
+                <li>Any other ideas</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
     with col2:
-        st.markdown("""
-        **📝 Suggestion:**
-        - UI/UX improvements
-        - Performance enhancements
-        - Workflow optimizations
-        - Any other ideas
+        st.markdown(f"""
+        <div style='background: {Config.get_color('warning', 0.05)}; 
+                    padding: 1.5rem; border-radius: 8px; 
+                    border-left: 4px solid {Config.COLORS['warning']};'>
+            <h4 style='margin: 0 0 1rem 0; color: {Config.COLORS['warning']};'>
+                💡 Feature Request
+            </h4>
+            <ul style='margin: 0; padding-left: 1.5rem;'>
+                <li>Describe the feature</li>
+                <li>Explain why it's useful</li>
+                <li>Provide examples if possible</li>
+                <li>Priority level (optional)</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        st.markdown(f"""
+        <div style='background: {Config.get_color('success', 0.05)}; 
+                    padding: 1.5rem; border-radius: 8px; 
+                    border-left: 4px solid {Config.COLORS['success']};'>
+            <h4 style='margin: 0 0 1rem 0; color: {Config.COLORS['success']};'>
+                💬 General
+            </h4>
+            <ul style='margin: 0; padding-left: 1.5rem;'>
+                <li>Questions</li>
+                <li>Compliments</li>
+                <li>General comments</li>
+                <li>Anything else!</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
-        **💬 General:**
-        - Questions
-        - Compliments
-        - General comments
-        - Anything else!
-        """)
-
-    # Examples
+    # Example feedback
     with st.expander("📋 Example Feedback"):
-        st.markdown("""
-        **Good Bug Report:**
-        > "When I upload images larger than 5MB, the page freezes. 
-        > Using Chrome on Windows 10. Can you fix this?"
+        st.markdown(f"""
+        <div style='background: {Config.get_color('primary', 0.02)}; 
+                    padding: 1rem; border-radius: 8px; margin-bottom: 1rem;'>
+            <strong style='color: {Config.COLORS['primary']};'>
+                ✓ Good Bug Report:
+            </strong>
+            <p style='margin: 0.5rem 0 0 0; font-style: italic;'>
+                "When I upload images larger than 5MB, the page freezes. 
+                Using Chrome on Windows 10. Can you fix this?"
+            </p>
+        </div>
 
-        **Good Feature Request:**
-        > "It would be great to have a batch comparison feature where 
-        > I can compare one person against multiple images at once."
+        <div style='background: {Config.get_color('warning', 0.02)}; 
+                    padding: 1rem; border-radius: 8px; margin-bottom: 1rem;'>
+            <strong style='color: {Config.COLORS['warning']};'>
+                ✓ Good Feature Request:
+            </strong>
+            <p style='margin: 0.5rem 0 0 0; font-style: italic;'>
+                "It would be great to have a batch comparison feature where 
+                I can compare one person against multiple images at once."
+            </p>
+        </div>
 
-        **Good Suggestion:**
-        > "The similarity gauge is awesome! Could you add a history 
-        > feature to see past comparisons?"
-        """)
+        <div style='background: {Config.get_color('info', 0.02)}; 
+                    padding: 1rem; border-radius: 8px;'>
+            <strong style='color: {Config.COLORS['info']};'>
+                ✓ Good Suggestion:
+            </strong>
+            <p style='margin: 0.5rem 0 0 0; font-style: italic;'>
+                "The similarity gauge is awesome! Could you add a history 
+                feature to see past comparisons?"
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # Statistics (if you want to show)
+    # App statistics
     st.markdown("---")
 
-    with st.expander("📊 App Statistics"):
-        col1, col2, col3 = st.columns(3)
+    with st.expander("📊 App Information"):
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
             st.metric("Model Accuracy", f"{Config.MODEL_METRICS['accuracy'] * 100:.1f}%")
@@ -250,12 +389,17 @@ def main():
 
         with col3:
             st.metric("Last Updated", Config.VERSION_DATE)
+        
+        with col4:
+            st.metric("Pages", "9")
 
         st.markdown(f"""
         <div style='margin-top: 1rem; padding: 1rem; 
                     background: {Config.get_color('info', 0.1)}; 
                     border-radius: 8px;'>
-            <h4 style='margin: 0; color: {Config.COLORS["info"]};'>About FaceMatch Pro</h4>
+            <h4 style='margin: 0; color: {Config.COLORS["info"]};'>
+                About FaceMatch Pro
+            </h4>
             <p style='margin: 0.5rem 0 0 0; font-size: 0.9rem;'>
                 FaceMatch Pro is an advanced face recognition system built with 
                 state-of-the-art deep learning. Your feedback helps us make it better!
