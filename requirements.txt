@@ -2,7 +2,6 @@
 
 # Core
 streamlit>=1.30.0
-python>=3.8
 
 # Deep Learning
 torch>=2.0.0
@@ -50,4 +49,5 @@ huggingface_hub >= 0.32.4
 # Optional: For better performance
 # accelerate>=0.24.0
 # bitsandbytes>=0.41.0
+
 
