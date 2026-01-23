@@ -20,6 +20,8 @@ from utils.face_detection import detect_faces, batch_detect_faces, crop_face, ge
 from utils.image_utils import load_image, validate_image, batch_load_images
 from utils.quality_check import batch_quality_analysis, get_quality_statistics
 
+from utils.session_utils import init_session_state
+init_session_state()
 
 def get_t(key):
     """Translation helper"""
@@ -449,4 +451,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
