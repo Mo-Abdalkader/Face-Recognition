@@ -14,9 +14,7 @@ import time
 
 from huggingface_hub import hf_hub_download
 
-# Import config
 import sys
-
 sys.path.append(str(Path(__file__).parent.parent))
 from config import Config
 
@@ -48,7 +46,7 @@ class ImprovedEncoder(nn.Module):
         super(ImprovedEncoder, self).__init__()
 
         # Backbone: ResNet50
-        resnet = models.resnet50(pretrained=False)  # Will load our trained weights
+        resnet = models.resnet50(pretrained=False)
         self.features = nn.Sequential(*list(resnet.children())[:-2])
 
         feat_dim = 2048
@@ -79,7 +77,6 @@ class ImprovedEncoder(nn.Module):
         attention_map = None
         if self.use_attention:
             if return_attention:
-                # Store attention weights for visualization
                 b, c, h, w = features.size()
                 y = self.attention.squeeze(features).view(b, c)
                 attention_weights = self.attention.excitation(y)
@@ -106,48 +103,75 @@ def load_model(model_path=None):
     Cached to avoid reloading
     """
     if model_path is None:
-        # model_path = Config.MODEL_PATH
-
-        model_path = hf_hub_download(
-            repo_id="Mo-Abdalkader/facematch-pro",
-            filename="FaceSimilarity-v0.1.pth"
-        )
+        try:
+            model_path = hf_hub_download(
+                repo_id="Mo-Abdalkader/facematch-pro",
+                filename="FaceSimilarity-v0.1.pth"
+            )
+        except Exception as e:
+            st.error(f"Error downloading model from Hugging Face: {str(e)}")
+            return None, None
 
     try:
         # Get device
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # Load checkpoint
+        # Load checkpoint - FIXED: Handle both old and new checkpoint formats
         checkpoint = torch.load(
             model_path,
             map_location=device,
-            weights_only=False  # For custom classes
+            weights_only=False
         )
 
-        # Create model
+        # Create model with config values
         model = ImprovedEncoder(
             embedding_dim=Config.EMBEDDING_DIM,
             dropout=Config.DROPOUT_RATE,
             use_attention=Config.USE_ATTENTION
         )
 
-        # Load weights
-        model.load_state_dict(checkpoint['model_state_dict'])
+        # Load weights - handle different checkpoint formats
+        if 'model_state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['model_state_dict'])
+        elif 'state_dict' in checkpoint:
+            model.load_state_dict(checkpoint['state_dict'])
+        else:
+            # Checkpoint IS the state dict
+            model.load_state_dict(checkpoint)
+
         model.to(device)
         model.eval()
 
+        st.success(f"✅ Model loaded successfully on {device}")
         return model, device
 
     except Exception as e:
         st.error(f"Error loading model: {str(e)}")
-        st.error("Please ensure the model file exists at: " + str(model_path))
+        st.error(f"Please ensure the model file exists at: {str(model_path)}")
+        
+        # Show helpful debug info
+        with st.expander("🔧 Troubleshooting"):
+            st.markdown(f"""
+            **Error Details:** {str(e)}
+            
+            **Common Solutions:**
+            1. Check if model file exists
+            2. Ensure you have internet connection for Hugging Face download
+            3. Try clearing Streamlit cache: `streamlit cache clear`
+            4. Verify model architecture matches checkpoint
+            
+            **Model Configuration:**
+            - Embedding Dim: {Config.EMBEDDING_DIM}
+            - Dropout: {Config.DROPOUT_RATE}
+            - Use Attention: {Config.USE_ATTENTION}
+            """)
+        
         return None, None
 
 
 def get_transform(augment=False):
     """Get image transformation pipeline"""
     if augment:
-        # For TTA
         return transforms.Compose([
             transforms.ToPILImage(),
             transforms.Resize((Config.IMAGE_SIZE, Config.IMAGE_SIZE)),
@@ -156,7 +180,6 @@ def get_transform(augment=False):
             transforms.Normalize(mean=Config.NORMALIZE_MEAN, std=Config.NORMALIZE_STD)
         ])
     else:
-        # Standard transform
         return transforms.Compose([
             transforms.ToPILImage(),
             transforms.Resize((Config.IMAGE_SIZE, Config.IMAGE_SIZE)),
@@ -185,7 +208,6 @@ def extract_embedding(model, image, device, use_tta=False, return_attention=Fals
     try:
         with torch.no_grad():
             if use_tta and Config.USE_TTA:
-                # Test-time augmentation
                 embeddings = []
 
                 # Original
@@ -204,7 +226,6 @@ def extract_embedding(model, image, device, use_tta=False, return_attention=Fals
                 attention_map = None
 
             else:
-                # Single forward pass
                 img_tensor = transform(image).unsqueeze(0).to(device)
 
                 if return_attention:
@@ -234,14 +255,10 @@ def compute_similarity(embedding1, embedding2):
         similarity: float in [0, 1]
     """
     try:
-        # Normalize (should already be normalized, but just in case)
         emb1 = embedding1 / (np.linalg.norm(embedding1) + 1e-8)
         emb2 = embedding2 / (np.linalg.norm(embedding2) + 1e-8)
 
-        # Cosine similarity
         similarity = np.dot(emb1.flatten(), emb2.flatten())
-
-        # Clip to [0, 1] and convert to percentage
         similarity = np.clip(similarity, 0, 1)
 
         return float(similarity)
@@ -252,45 +269,21 @@ def compute_similarity(embedding1, embedding2):
 
 
 def is_match(similarity, threshold=None):
-    """
-    Determine if faces match based on threshold
-
-    Args:
-        similarity: float similarity score
-        threshold: float threshold value (uses default if None)
-
-    Returns:
-        bool: True if match, False otherwise
-    """
+    """Determine if faces match based on threshold"""
     if threshold is None:
         threshold = Config.DEFAULT_THRESHOLD
-
     return similarity >= threshold
 
 
 def batch_extract_embeddings(model, images, device, use_tta=False, show_progress=True):
-    """
-    Extract embeddings from multiple images
-
-    Args:
-        model: Face recognition model
-        images: list of numpy arrays
-        device: torch device
-        use_tta: Use test-time augmentation
-        show_progress: Show progress bar
-
-    Returns:
-        embeddings: numpy array (N, 512)
-    """
+    """Extract embeddings from multiple images"""
     embeddings = []
 
-    iterator = enumerate(images)
     if show_progress:
-        import streamlit as st
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-    for i, image in iterator:
+    for i, image in enumerate(images):
         embedding = extract_embedding(model, image, device, use_tta)
         if embedding is not None:
             embeddings.append(embedding)
@@ -325,18 +318,7 @@ def get_model_info():
 
 
 def measure_inference_time(model, image, device, num_runs=10):
-    """
-    Measure average inference time
-
-    Args:
-        model: Face recognition model
-        image: numpy array
-        device: torch device
-        num_runs: number of runs to average
-
-    Returns:
-        avg_time: average time in seconds
-    """
+    """Measure average inference time"""
     transform = get_transform()
     img_tensor = transform(image).unsqueeze(0).to(device)
 
