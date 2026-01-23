@@ -18,6 +18,9 @@ from utils.model_utils import load_model, extract_embedding, compute_similarity
 from utils.face_detection import detect_faces, draw_face_rectangles, crop_face, get_best_face
 from utils.image_utils import load_image, validate_image, batch_load_images, add_match_badge
 
+from utils.session_utils import init_session_state
+init_session_state()
+
 
 def get_t(key):
     """Translation helper"""
@@ -379,4 +382,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
