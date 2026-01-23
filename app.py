@@ -23,7 +23,8 @@ st.set_page_config(
     initial_sidebar_state=Config.INITIAL_SIDEBAR_STATE
 )
 
-# Initialize session state
+# ==================== CRITICAL: Initialize session state FIRST ====================
+# This MUST happen before any get_text() calls
 if 'language' not in st.session_state:
     st.session_state.language = Config.DEFAULT_LANGUAGE
 if 'theme' not in st.session_state:
@@ -43,17 +44,14 @@ def apply_custom_css():
 
     st.markdown(f"""
     <style>
-        /* RTL Support */
         [dir="{lang_dir}"] {{
             direction: {lang_dir};
         }}
 
-        /* Main container */
         .main {{
             padding: 2rem;
         }}
 
-        /* Headers */
         h1 {{
             color: {Config.COLORS['primary']};
             font-weight: 700;
@@ -71,16 +69,6 @@ def apply_custom_css():
             font-weight: 500;
         }}
 
-        /* Cards */
-        .stCard {{
-            background: white;
-            padding: 1.5rem;
-            border-radius: 10px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-            margin-bottom: 1rem;
-        }}
-
-        /* Buttons */
         .stButton>button {{
             background: linear-gradient(135deg, {Config.COLORS['primary']}, {Config.COLORS['secondary']});
             color: white;
@@ -96,7 +84,6 @@ def apply_custom_css():
             box-shadow: 0 4px 12px rgba(138, 43, 226, 0.3);
         }}
 
-        /* Success/Error boxes */
         .success-box {{
             background-color: {Config.get_color('success', 0.1)};
             border-left: 4px solid {Config.COLORS['success']};
@@ -113,7 +100,6 @@ def apply_custom_css():
             margin: 1rem 0;
         }}
 
-        /* Metrics */
         .metric-card {{
             background: linear-gradient(135deg, {Config.get_color('primary', 0.1)}, {Config.get_color('secondary', 0.1)});
             padding: 1.5rem;
@@ -133,44 +119,6 @@ def apply_custom_css():
             color: {Config.COLORS['dark']};
             margin-top: 0.5rem;
         }}
-
-        /* File uploader */
-        .uploadedFile {{
-            border: 2px dashed {Config.COLORS['primary']};
-            border-radius: 8px;
-            padding: 1rem;
-        }}
-
-        /* Sidebar */
-        .css-1d391kg {{
-            background: linear-gradient(180deg, {Config.get_color('primary', 0.05)}, white);
-        }}
-
-        /* Progress bar */
-        .stProgress > div > div > div {{
-            background: linear-gradient(90deg, {Config.COLORS['primary']}, {Config.COLORS['secondary']});
-        }}
-
-        /* Match badge */
-        .match-badge {{
-            display: inline-block;
-            padding: 0.5rem 1rem;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 1.1rem;
-        }}
-
-        .match-yes {{
-            background-color: {Config.get_color('success', 0.2)};
-            color: {Config.COLORS['success']};
-            border: 2px solid {Config.COLORS['success']};
-        }}
-
-        .match-no {{
-            background-color: {Config.get_color('danger', 0.2)};
-            color: {Config.COLORS['danger']};
-            border: 2px solid {Config.COLORS['danger']};
-        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -178,11 +126,11 @@ def apply_custom_css():
 def render_sidebar():
     """Render sidebar navigation and controls"""
     with st.sidebar:
-        # Logo and title
+        # Logo and title at top
         st.markdown(f"""
         <div style='text-align: center; padding: 1rem 0;'>
             <h1 style='font-size: 2.5rem; margin: 0;'>{Config.PAGE_ICON}</h1>
-            <h2 style='margin: 0.5rem 0;'>{get_t('app_name')}</h2>
+            <h2 style='margin: 0.5rem 0; font-size: 1.5rem;'>{get_t('app_name')}</h2>
             <p style='color: gray; font-size: 0.9rem;'>v{Config.VERSION}</p>
         </div>
         """, unsafe_allow_html=True)
@@ -205,20 +153,22 @@ def render_sidebar():
 
         st.markdown("---")
 
-        # Navigation menu
+        # Navigation menu - FIXED ORDER
+        menu_items = [
+            get_t('nav_home'),
+            get_t('nav_face_detection'),
+            get_t('nav_compare'),
+            get_t('nav_search'),
+            get_t('nav_batch'),
+            get_t('nav_demo'),
+            get_t('nav_settings'),
+            get_t('nav_feedback'),
+            get_t('nav_about')
+        ]
+
         selected = option_menu(
             menu_title=None,
-            options=[
-                get_t('nav_home'),
-                get_t('nav_face_detection'),
-                get_t('nav_compare'),
-                get_t('nav_search'),
-                get_t('nav_batch'),
-                get_t('nav_demo'),
-                get_t('nav_settings'),
-                get_t('nav_feedback'),
-                get_t('nav_about')
-            ],
+            options=menu_items,
             icons=['house', 'person', 'arrows-angle-contract', 'search',
                    'folder', 'joystick', 'gear', 'chat', 'info-circle'],
             menu_icon="cast",
@@ -248,11 +198,13 @@ def render_sidebar():
 
 
 def render_home_page():
-    """Render home page"""
-    # Hero section
+    """Render home page - FIXED LAYOUT"""
+    # Hero section at TOP
     st.markdown(f"""
-    <div style='text-align: center; padding: 3rem 0 2rem 0;'>
-        <h1 style='font-size: 3rem; margin-bottom: 0.5rem;'>{get_t('home_title')}</h1>
+    <div style='text-align: center; padding: 2rem 0 1rem 0;'>
+        <h1 style='font-size: 3rem; margin-bottom: 0.5rem;'>{Config.PAGE_ICON}</h1>
+        <h1 style='font-size: 2.5rem; margin-bottom: 0.5rem;'>{get_t('app_name')}</h1>
+        <h2 style='font-size: 1.8rem; margin-bottom: 0.5rem;'>{get_t('home_title')}</h2>
         <p style='font-size: 1.2rem; color: gray;'>{get_t('home_subtitle')}</p>
     </div>
     """, unsafe_allow_html=True)
@@ -333,7 +285,7 @@ def render_home_page():
             </div>
             """, unsafe_allow_html=True)
 
-    # Gauge chart for overall performance
+    # Gauge chart
     st.markdown("<br>", unsafe_allow_html=True)
 
     fig = go.Figure(go.Indicator(
@@ -362,71 +314,38 @@ def render_home_page():
 
 def main():
     """Main application"""
-    # Apply custom CSS
     apply_custom_css()
 
     # Render sidebar and get selected page
     selected_page = render_sidebar()
 
-    # Route to pages
+    # Route to pages - EXACT ORDER MATCH
     if selected_page == get_t('nav_home'):
         render_home_page()
 
     elif selected_page == get_t('nav_face_detection'):
-        st.title(get_t('fd_title'))
-        st.info("🚧 This page will detect faces in your images using MTCNN")
         Face_Detection.main()
 
-        # st.markdown("**Coming in the next files...**")
-
     elif selected_page == get_t('nav_compare'):
-        st.title(get_t('comp_title'))
-        st.info("🚧 This page will compare two faces with heatmap visualization")
         Compare.main()
 
-        # st.markdown("**Coming in the next files...**")
-
     elif selected_page == get_t('nav_search'):
-        st.title(get_t('search_title'))
-        st.info("🚧 This page will search for matching faces in multiple images")
         Search.main()
 
-        # st.markdown("**Coming in the next files...**")
-
     elif selected_page == get_t('nav_batch'):
-        st.title(get_t('batch_title'))
-        st.info("🚧 This page will process batches and find similar faces")
         Batch.main()
 
-        # st.markdown("**Coming in the next files...**")
-
     elif selected_page == get_t('nav_demo'):
-        st.title(get_t('demo_title'))
-        st.info("🚧 This page will show demo scenarios")
         Demo.main()
 
-        # st.markdown("**Coming in the next files...**")
-
     elif selected_page == get_t('nav_settings'):
-        st.title(get_t('set_title'))
-        st.info("🚧 This page will let you customize settings")
         Settings.main()
 
-        # st.markdown("**Coming in the next files...**")
-
     elif selected_page == get_t('nav_feedback'):
-        st.title(get_t('fb_title'))
-        st.info("🚧 This page will send feedback to Telegram")
         Feedback.main()
 
-        # st.markdown("**Coming in the next files...**")
-
     elif selected_page == get_t('nav_about'):
-        st.title(get_t('about_title'))
-        st.info("🚧 This page will show app information")
         About.main()
-
-        # st.markdown("**Coming in the next files...**")
 
     # Footer
     st.markdown("---")
