@@ -17,6 +17,8 @@ from utils.face_detection import detect_faces, crop_face, get_best_face
 from utils.image_utils import load_image_from_path, create_side_by_side, add_match_badge
 import plotly.graph_objects as go
 
+from utils.session_utils import init_session_state
+init_session_state()
 
 def get_t(key):
     """Translation helper"""
@@ -442,4 +444,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
