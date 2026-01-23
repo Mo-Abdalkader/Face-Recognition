@@ -11,22 +11,15 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from config import Config
 from translations import get_text
+from utils.session_utils import init_session_state
+
+# CRITICAL: Initialize session state FIRST
+init_session_state()
 
 
 def get_t(key):
     """Translation helper"""
     return get_text(key, st.session_state.language)
-
-
-def initialize_settings():
-    """Initialize settings in session state"""
-    if 'settings_initialized' not in st.session_state:
-        st.session_state.threshold = Config.DEFAULT_THRESHOLD
-        st.session_state.use_tta = Config.USE_TTA
-        st.session_state.heatmap_alpha = Config.HEATMAP_ALPHA
-        st.session_state.min_face_size = Config.MTCNN_MIN_FACE_SIZE
-        st.session_state.grid_cols = Config.DEFAULT_GRID_COLS
-        st.session_state.settings_initialized = True
 
 
 def reset_to_defaults():
@@ -46,27 +39,22 @@ def main():
 
     st.markdown("---")
 
-    # Initialize settings
-    initialize_settings()
-
     # General Settings
     st.markdown(f"## 🌐 {get_t('set_general')}")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        # Language (already handled in sidebar, show current)
         st.markdown(f"### {get_t('set_language')}")
         current_lang = "English" if st.session_state.language == 'en' else "العربية"
         st.info(f"Current: {current_lang}")
         st.caption("Use language switcher in sidebar to change")
 
     with col2:
-        # Theme (already handled in sidebar, show current)
         st.markdown(f"### {get_t('set_theme')}")
         current_theme = st.session_state.get('theme', 'light')
         st.info(f"Current: {current_theme.title()}")
-        st.caption("Use theme toggle in sidebar to change")
+        st.caption("Theme customization coming soon")
 
     st.markdown("---")
 
@@ -171,12 +159,11 @@ def main():
     with col2:
         st.markdown(f"### {get_t('set_detection_sensitivity')}")
 
-        # Detection confidence (informational only, not actually changing MTCNN)
         sensitivity_options = ["Low (0.8)", "Medium (0.9)", "High (0.95)"]
         sensitivity = st.selectbox(
             "Detection sensitivity",
             range(len(sensitivity_options)),
-            index=1,  # Default to medium
+            index=1,
             format_func=lambda x: sensitivity_options[x],
             label_visibility="collapsed"
         )
@@ -223,7 +210,6 @@ def main():
         st.session_state.grid_cols = grid_cols
         st.caption(f"Images per row: {grid_cols}")
 
-    # Show confidence toggle
     show_confidence = st.checkbox(
         get_t('set_show_confidence'),
         value=True
@@ -246,7 +232,7 @@ def main():
 
     st.markdown("---")
 
-    # Model Information (Read-only)
+    # Model Information
     st.markdown("## ℹ️ Model Information")
 
     col1, col2 = st.columns(2)
@@ -328,7 +314,7 @@ def main():
         - Use high detection sensitivity
         """)
 
-    # Advanced Settings (collapsed by default)
+    # Advanced Settings
     with st.expander("🔧 Advanced Settings"):
         st.warning("⚠️ These settings are for advanced users only")
 
@@ -357,10 +343,11 @@ def main():
         st.markdown("### Face Detection Advanced")
 
         st.code(f"""
-        MTCNN Parameters:
-        - Thresholds: {Config.MTCNN_THRESHOLDS}
-        - Scale Factor: {Config.MTCNN_FACTOR}
-        - Min Face Size: {min_face_size}px
+        MTCNN Parameters (PyTorch):
+        - Keep All: True (detect all faces)
+        - Device: CPU
+        - Post Process: False
+        - Min Face Size: {min_face_size}px (configurable above)
         """)
 
         st.caption("These are optimized values. Change with caution!")
