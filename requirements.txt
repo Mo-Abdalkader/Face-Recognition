@@ -6,11 +6,10 @@ streamlit>=1.30.0
 # Deep Learning
 torch>=2.0.0
 torchvision>=0.15.0
-tensorflow>=2.10.0
+facenet-pytorch>=2.5.0
 
 # Computer Vision
 opencv-python-headless>=4.8.0
-mtcnn>=0.1.1
 Pillow>=10.0.0
 
 # Scientific Computing
@@ -44,4 +43,3 @@ fpdf>=1.7.2
 tqdm>=4.66.0
 python-dateutil>=2.8.2
 huggingface_hub>=0.32.4
-
