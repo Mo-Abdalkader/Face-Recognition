@@ -22,6 +22,8 @@ from utils.face_detection import (
 )
 from utils.image_utils import load_image, validate_image, convert_to_bytes
 
+from utils.session_utils import init_session_state
+init_session_state()
 
 def get_t(key):
     """Translation helper"""
@@ -533,3 +535,4 @@ Individual Faces:
 
 if __name__ == "__main__":
     main()
+
