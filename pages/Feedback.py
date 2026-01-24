@@ -102,12 +102,6 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Feedback form in a clean card
-    st.markdown(f"""
-    <div style='background: white; padding: 2rem; border-radius: 10px; 
-                box-shadow: 0 2px 8px rgba(0,0,0,0.1);'>
-    """, unsafe_allow_html=True)
-
     # Name (optional)
     col1, col2 = st.columns([2, 1])
     
@@ -410,3 +404,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
