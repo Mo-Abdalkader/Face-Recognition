@@ -13,6 +13,9 @@ from config import Config
 from translations import get_text
 from utils.telegram_utils import send_telegram_message, get_telegram_credentials
 
+from utils.session_utils import init_session_state
+
+init_session_state()
 
 def get_t(key):
     """Translation helper"""
@@ -404,4 +407,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
