@@ -24,7 +24,6 @@ st.set_page_config(
 )
 
 # ==================== CRITICAL: Initialize session state FIRST ====================
-# This MUST happen before any get_text() calls
 if 'language' not in st.session_state:
     st.session_state.language = Config.DEFAULT_LANGUAGE
 if 'theme' not in st.session_state:
@@ -119,6 +118,11 @@ def apply_custom_css():
             color: {Config.COLORS['dark']};
             margin-top: 0.5rem;
         }}
+        
+        /* Hide default Streamlit navigation */
+        section[data-testid="stSidebarNav"] {{
+            display: none;
+        }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -128,68 +132,83 @@ def render_sidebar():
     with st.sidebar:
         # Logo and title at top
         st.markdown(f"""
-        <div style='text-align: center; padding: 1rem 0;'>
-            <h1 style='font-size: 2.5rem; margin: 0;'>{Config.PAGE_ICON}</h1>
-            <h2 style='margin: 0.5rem 0; font-size: 1.5rem;'>{get_t('app_name')}</h2>
-            <p style='color: gray; font-size: 0.9rem;'>v{Config.VERSION}</p>
+        <div style='text-align: center; padding: 1.5rem 0 1rem 0;'>
+            <div style='font-size: 4rem; margin-bottom: 0.5rem;'>{Config.PAGE_ICON}</div>
+            <h2 style='margin: 0; font-size: 1.5rem; color: {Config.COLORS['primary']};'>
+                {get_t('app_name')}
+            </h2>
+            <p style='color: gray; font-size: 0.85rem; margin: 0.3rem 0 0 0;'>
+                v{Config.VERSION}
+            </p>
         </div>
         """, unsafe_allow_html=True)
 
         st.markdown("---")
 
-        # Language selector
+        # Language selector - compact
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🇬🇧 English", use_container_width=True,
+            if st.button("🇬🇧 EN", width="stretch",
                          type="primary" if st.session_state.language == 'en' else "secondary"):
                 st.session_state.language = 'en'
                 st.rerun()
 
         with col2:
-            if st.button("عربي 🇸🇦", use_container_width=True,
+            if st.button("🇸🇦 AR", width="stretch",
                          type="primary" if st.session_state.language == 'ar' else "secondary"):
                 st.session_state.language = 'ar'
                 st.rerun()
 
         st.markdown("---")
 
-        # Navigation menu - FIXED ORDER
-        menu_items = [
-            get_t('nav_home'),
-            get_t('nav_face_detection'),
-            get_t('nav_compare'),
-            get_t('nav_search'),
-            get_t('nav_batch'),
-            get_t('nav_demo'),
-            get_t('nav_settings'),
-            get_t('nav_feedback'),
-            get_t('nav_about')
-        ]
-
+        # Navigation menu - CLEAN, NO DUPLICATES
         selected = option_menu(
             menu_title=None,
-            options=menu_items,
-            icons=['house', 'person', 'arrows-angle-contract', 'search',
-                   'folder', 'joystick', 'gear', 'chat', 'info-circle'],
+            options=[
+                get_t('nav_home'),
+                get_t('nav_face_detection'),
+                get_t('nav_compare'),
+                get_t('nav_search'),
+                get_t('nav_batch'),
+                get_t('nav_demo'),
+                get_t('nav_settings'),
+                get_t('nav_feedback'),
+                get_t('nav_about')
+            ],
+            icons=['house', 'person-bounding-box', 'arrows-angle-contract', 'search',
+                   'folder-open', 'joystick', 'gear', 'chat-dots', 'info-circle'],
             menu_icon="cast",
             default_index=0,
             styles={
                 "container": {"padding": "0"},
-                "icon": {"color": Config.COLORS['primary'], "font-size": "1.2rem"},
-                "nav-link": {"font-size": "1rem", "text-align": "left", "margin": "0px"},
-                "nav-link-selected": {"background-color": Config.COLORS['primary']},
+                "icon": {"color": Config.COLORS['primary'], "font-size": "1.1rem"},
+                "nav-link": {
+                    "font-size": "0.95rem", 
+                    "text-align": "left", 
+                    "margin": "2px 0",
+                    "padding": "0.6rem 1rem",
+                    "border-radius": "5px"
+                },
+                "nav-link-selected": {
+                    "background-color": Config.COLORS['primary'],
+                    "font-weight": "600"
+                },
             }
         )
 
         st.markdown("---")
 
-        # Model status
+        # Model status - compact
         st.markdown(f"""
-        <div style='background: {Config.get_color('info', 0.1)}; padding: 1rem; border-radius: 8px;'>
-            <h4 style='margin: 0; color: {Config.COLORS['info']};'>📊 Model Status</h4>
-            <p style='margin: 0.5rem 0 0 0; font-size: 0.9rem;'>
-                ✅ Accuracy: {Config.MODEL_METRICS['accuracy'] * 100:.1f}%<br>
-                🎯 Threshold: {st.session_state.threshold:.2f}
+        <div style='background: linear-gradient(135deg, {Config.get_color('info', 0.1)}, 
+                    {Config.get_color('primary', 0.05)}); 
+                    padding: 1rem; border-radius: 8px; border-left: 3px solid {Config.COLORS['info']};'>
+            <h4 style='margin: 0 0 0.5rem 0; color: {Config.COLORS['info']}; font-size: 0.95rem;'>
+                📊 Model Status
+            </h4>
+            <p style='margin: 0; font-size: 0.85rem; line-height: 1.6;'>
+                ✅ <strong>Accuracy:</strong> {Config.MODEL_METRICS['accuracy'] * 100:.1f}%<br>
+                🎯 <strong>Threshold:</strong> {st.session_state.threshold:.2f}
             </p>
         </div>
         """, unsafe_allow_html=True)
