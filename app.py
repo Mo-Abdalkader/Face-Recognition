@@ -119,9 +119,14 @@ def apply_custom_css():
             margin-top: 0.5rem;
         }}
         
-        /* Hide default Streamlit navigation */
+        /* Hide plain Streamlit navigation, keep beautiful user content */
         section[data-testid="stSidebarNav"] {{
-            display: none;
+            display: none !important;
+        }}
+        
+        /* Keep the beautiful user content navigation */
+        section[data-testid="stSidebarUserContent"] {{
+            display: block;
         }}
     </style>
     """, unsafe_allow_html=True)
@@ -148,13 +153,13 @@ def render_sidebar():
         # Language selector - compact
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🇬🇧 EN", width="stretch",
+            if st.button("English", width="stretch",
                          type="primary" if st.session_state.language == 'en' else "secondary"):
                 st.session_state.language = 'en'
                 st.rerun()
 
         with col2:
-            if st.button("🇸🇦 AR", width="stretch",
+            if st.button("عربي", width="stretch",
                          type="primary" if st.session_state.language == 'ar' else "secondary"):
                 st.session_state.language = 'ar'
                 st.rerun()
@@ -176,7 +181,7 @@ def render_sidebar():
                 get_t('nav_about')
             ],
             icons=['house', 'person-bounding-box', 'arrows-angle-contract', 'search',
-                   'folder-open', 'joystick', 'gear', 'chat-dots', 'info-circle'],
+                   'folder', 'joystick', 'gear', 'chat-dots', 'info-circle'],
             menu_icon="cast",
             default_index=0,
             styles={
